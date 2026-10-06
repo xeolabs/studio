@@ -1,0 +1,117 @@
+import type {CoordinateSystemParams} from "../model/scene";
+import type {LoaderProgress} from "./LoaderProgress";
+
+/**
+ * Options shared by all {@link ModelLoader.load | ModelLoader.load} calls.
+ *
+ * Format-specific options (e.g. glTF's `dracoModule`, 3D Tiles' `maxDepth`)
+ * live in per-format interfaces that extend this one — see `GLTFLoadOptions`
+ * and `ThreeDTilesLoadOptions` — so this base stays free of any one format's
+ * concerns.
+ */
+export interface ModelLoadOptions {
+
+  /**
+   * Describes the coordinate system of the model to load.
+   *
+   * When provided, this enables the loader to automatically transform the model
+   * from its local oordinate system to the Scene's global coordinate system.
+   */
+  coordinateSystem?: CoordinateSystemParams;
+
+  /**
+   * Optional layer ID to assign to all {@link model!scene.SceneObject | SceneObjects} created by the loader.
+   *
+   * See {@link model!scene.SceneObject.layerId | SceneObject.layerId} for details on how this layer ID
+   * is used when the Scene is attached to a {@link viewing!viewer.Viewer | Viewer}.
+   */
+  layerId?: string;
+
+  /**
+   * When `true`, loaders should omit vertex normals when the source format and
+   * parser can do so without breaking required target data. This is a
+   * best-effort option: formats that do not carry normals, or whose parser
+   * cannot avoid them, may ignore it.
+   */
+  ignoreNormals?: boolean;
+
+  /**
+   * When `true`, loaders should omit texture coordinates when the source format
+   * and parser can do so without breaking required target data. This is a
+   * best-effort option: formats that do not carry UVs, or whose parser cannot
+   * avoid them, may ignore it.
+   */
+  ignoreUVs?: boolean;
+
+  /**
+   * Optional base URL used by formats that reference external resources
+   * (e.g. glTF's separate `.bin` and texture files). When set, the loader
+   * resolves relative URIs in the model file against this base — set this
+   * to the directory the model lives in.
+   */
+  baseUri?: string;
+
+  /**
+   * Optional `AbortSignal`. Loaders that have been swept to
+   * cooperative-yield (every modern parser in `formats/`)
+   * check `signal.aborted` at every yield point and throw a
+   * `DOMException("Aborted", "AbortError")` when the caller
+   * cancels — combine with the signal your UI uses for the
+   * Cancel button on a load dialog.
+   *
+   * Loaders that pre-date the sweep ignore this field and run
+   * to completion regardless — passing it is safe in either
+   * case.
+   */
+  signal?: AbortSignal;
+
+  /**
+   * Optional progress callback. Loaders fire this from inside
+   * their hot loops at roughly 60 Hz (paced by the same
+   * {@link base!utils.yieldToHost | yieldToHost}
+   * interval that keeps the main thread responsive). UIs
+   * subscribe to drive a progress bar / phase label /
+   * cancellable dialog.
+   *
+   * The callback receives a {@link LoaderProgress} object
+   * literal. Loaders may reuse the same object across emits —
+   * copy out any fields you need to retain past the synchronous
+   * call.
+   */
+  onProgress?: (progress: LoaderProgress) => void;
+
+  /**
+   * Minimum gap (in milliseconds) between cooperative yields
+   * during the load. The default of 16ms (≈ 60 Hz) keeps the UI
+   * fully responsive but pays the `setTimeout(0)` overhead
+   * (~4 ms per yield on most browsers) on every animation
+   * frame, which adds up across a long load. Raising this to
+   * 50–100ms cuts that overhead and noticeably speeds up large
+   * loads, at the cost of progress-bar / paint updates landing
+   * at 10–20 Hz instead of 60 Hz.
+   *
+   * Values under 16ms are clamped to 16ms — going below the
+   * default doesn't increase perceived smoothness and only adds
+   * yield overhead.
+   *
+   * Loaders that pre-date the cooperative-yield sweep ignore
+   * this field; passing it is safe in either case.
+   */
+  yieldIntervalMs?: number;
+
+  /**
+   * When `false` (the default), the SceneModel is marked
+   * {@link model!scene.SceneModel.building | building} for the duration of the
+   * load, so a connected renderer suspends per-frame uploads + draws until the
+   * model is fully assembled and then renders it once — fastest time to the
+   * first frame showing the whole model, but the view is static during the load
+   * (no progressive reveal, no camera interaction).
+   *
+   * Set `true` to render the model incrementally as it loads (progressive
+   * reveal), at the cost of redundant mid-load frames.
+   *
+   * Has no effect when no renderer is attached.
+   */
+  progressiveRender?: boolean;
+
+}

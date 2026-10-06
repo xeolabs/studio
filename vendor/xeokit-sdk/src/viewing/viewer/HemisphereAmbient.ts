@@ -1,0 +1,220 @@
+import type {HemisphereAmbientParams} from "./HemisphereAmbientParams";
+import type {View} from "./View";
+import {createVec3Float64, type Vec3, type Vec3Float} from "../../base/math/vector";
+import {SDKErrorType, type SDKResult} from "../../base/core";
+
+
+/**
+ * Configures the analytical hemisphere ambient term for a {@link viewing!viewer.View | View}.
+ *
+ * * Located at {@link Lights.hemispheric}, which lives at {@link View.lights}.
+ *
+ * The renderer evaluates an ambient irradiance term per fragment by
+ * lerping between {@link HemisphereAmbient.skyColor} and
+ * {@link HemisphereAmbient.groundColor} based on how much the
+ * fragment's normal faces world up vs. world down. No cubemap
+ * textures, no specular reflections, no prefiltering — just a smooth
+ * two-colour gradient that lifts the flat ambient floor while enabled.
+ *
+ * Cheap: two uniforms and one `mix` + `dot` per fragment. Disabled by
+ * default so a plain View uses only its basic ambient and directional
+ * lights.
+ */
+class HemisphereAmbient {
+
+  /**
+   * The View to which this HemisphereAmbient belongs.
+   */
+  public readonly view: View;
+  #enabled: boolean;
+  #intensity: number;
+  #skyColor: Vec3Float;
+  #groundColor: Vec3Float;
+  #worldUp: Vec3Float;
+  #destroyed: boolean = false;
+
+  /**
+   * @private
+   */
+  constructor(view: View, params: HemisphereAmbientParams = {}) {
+    this.view = view;
+    this.#enabled = params.enabled === true;
+    this.#intensity = params.intensity !== undefined ? params.intensity : 0.8;
+    this.#skyColor = createVec3Float64(params.skyColor || [0.62, 0.72, 0.86]);
+    this.#groundColor = createVec3Float64(params.groundColor || [0.42, 0.36, 0.30]);
+    this.#worldUp = createVec3Float64(params.worldUp || [0, 0, 1]);
+  }
+
+      set enabled(value: boolean) {
+    const enabled = value === true;
+    if (this.#enabled === enabled) return;
+    this.#enabled = enabled;
+    this.view.needsRender();
+  }
+
+  get enabled(): boolean {
+    return this.#enabled;
+  }
+
+  /**
+   * Returns true if the hemisphere ambient term is currently possible
+   * given the View's state. Always `true` — the term is analytical and
+   * has no GPU-feature dependencies.
+   * @private
+   */
+  get possible(): boolean {
+    return true;
+  }
+
+  /**
+   * Gets if the hemisphere ambient term is currently applied.
+   *
+   * This is `true` when the component enabled state is
+   * in the component enabled state.
+   */
+  get applied(): boolean {
+    return this.#enabled;
+  }
+
+  /**
+   * Sets the hemisphere ambient contribution multiplier. Range
+   * `[0, ∞)`. Has no effect when the active the component enabled state
+   * isn't in the component enabled state.
+   *
+   * Default value is `0.8`.
+   */
+  set intensity(value: number) {
+    if (typeof value !== "number") return;
+    if (this.#intensity === value) return;
+    this.#intensity = value;
+    this.view.needsRender();
+  }
+
+  /**
+   * Gets the hemisphere ambient contribution multiplier.
+   */
+  get intensity(): number {
+    return this.#intensity;
+  }
+
+  /**
+   * Sets the linear-space RGB colour the renderer returns for normals
+   * facing world up.
+   *
+   * Default value is `[0.62, 0.72, 0.86]`.
+   */
+  set skyColor(value: Vec3) {
+    if (!value || value.length < 3) {
+      this.view.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: "[HemisphereAmbient set skyColor] Invalid colour parameter."
+      });
+      return;
+    }
+    const c = this.#skyColor;
+    if (c[0] === value[0] && c[1] === value[1] && c[2] === value[2]) return;
+    c[0] = value[0]; c[1] = value[1]; c[2] = value[2];
+    this.view.needsRender();
+  }
+
+  /**
+   * Gets the linear-space RGB sky colour.
+   */
+  get skyColor(): Vec3 {
+    return this.#skyColor;
+  }
+
+  /**
+   * Sets the linear-space RGB colour the renderer returns for normals
+   * facing world down.
+   *
+   * Default value is `[0.42, 0.36, 0.30]`.
+   */
+  set groundColor(value: Vec3) {
+    if (!value || value.length < 3) {
+      this.view.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: "[HemisphereAmbient set groundColor] Invalid colour parameter."
+      });
+      return;
+    }
+    const c = this.#groundColor;
+    if (c[0] === value[0] && c[1] === value[1] && c[2] === value[2]) return;
+    c[0] = value[0]; c[1] = value[1]; c[2] = value[2];
+    this.view.needsRender();
+  }
+
+  /**
+   * Gets the linear-space RGB ground colour.
+   */
+  get groundColor(): Vec3 {
+    return this.#groundColor;
+  }
+
+  /**
+   * Sets the world-space up axis used to weight the sky/ground sample.
+   * Override for non-Z-up scenes (e.g. `[0, 1, 0]` for Y-up).
+   *
+   * Default value is `[0, 0, 1]`.
+   */
+  set worldUp(value: Vec3) {
+    if (!value || value.length < 3) return;
+    const c = this.#worldUp;
+    if (c[0] === value[0] && c[1] === value[1] && c[2] === value[2]) return;
+    c[0] = value[0]; c[1] = value[1]; c[2] = value[2];
+    this.view.needsRender();
+  }
+
+  /**
+   * Gets the world-space up axis.
+   */
+  get worldUp(): Vec3 {
+    return this.#worldUp;
+  }
+
+  /**
+   * Gets the current configuration of this HemisphereAmbient component.
+   */
+  toParams(): SDKResult<HemisphereAmbientParams> {
+    return {
+      ok: true,
+      value: {
+        enabled: this.#enabled,
+        intensity: this.intensity,
+        skyColor: <Vec3>Array.from(this.skyColor),
+        groundColor: <Vec3>Array.from(this.groundColor),
+        worldUp: <Vec3>Array.from(this.worldUp)
+      }
+    };
+  }
+
+  /**
+   * Configures this HemisphereAmbient component from a params object.
+   */
+  fromParams(params: HemisphereAmbientParams): SDKResult<void> {
+    if (this.#destroyed) {
+      return this.view.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[HemisphereAmbient.fromParams] HemisphereAmbient has been destroyed."
+      });
+    }
+    if (params.enabled !== undefined)     this.enabled     = params.enabled;
+    if (params.intensity !== undefined)   this.intensity   = params.intensity;
+    if (params.skyColor !== undefined)    this.skyColor    = <Vec3>Array.from(params.skyColor);
+    if (params.groundColor !== undefined) this.groundColor = <Vec3>Array.from(params.groundColor);
+    if (params.worldUp !== undefined)     this.worldUp     = <Vec3>Array.from(params.worldUp);
+    return { ok: true, value: undefined };
+  }
+
+  /**
+   * @private
+   */
+  destroy() {
+    this.#destroyed = true;
+  }
+}
+
+export {HemisphereAmbient};

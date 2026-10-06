@@ -1,0 +1,151 @@
+        .app-shell {
+            --el-color-primary: #2367c7;
+            --el-color-primary-light-3: #5f94da;
+            --el-color-primary-light-5: #9bbbe7;
+            --el-color-primary-light-7: #c8dbf2;
+            --el-color-primary-light-8: #dce9f8;
+            --el-color-primary-light-9: #eef6ff;
+            --el-color-primary-dark-2: #185a9d;
+            --el-border-color: #c4ceda;
+            --el-border-color-light: #d6dee8;
+            --el-border-color-lighter: #e4eaf1;
+            --el-fill-color: #f8fafc;
+            --el-fill-color-light: #fbfcfe;
+            --el-fill-color-lighter: #ffffff;
+            --el-fill-color-blank: #ffffff;
+            --el-text-color-primary: #1f2c3a;
+            --el-text-color-regular: #405062;
+            --el-text-color-secondary: #667382;
+            --el-disabled-bg-color: #f1f5f9;
+            --el-disabled-border-color: #d8e0e8;
+            --el-disabled-text-color: #9aa6b4;
+            --el-border-radius-base: 4px;
+        }
+
+        .app-shell .el-select__wrapper,
+        .app-shell .el-input__wrapper,
+        .app-shell .el-input-number .el-input__wrapper {
+            min-height: 26px;
+            border-radius: 4px;
+            background: linear-gradient(#ffffff, #f8fbff);
+            box-shadow: 0 0 0 1px #c4ceda inset;
+        }
+
+        .app-shell .el-select__wrapper:hover,
+        .app-shell .el-input__wrapper:hover {
+            box-shadow: 0 0 0 1px #9bbbe7 inset;
+        }
+
+        .app-shell .el-select__wrapper.is-focused,
+        .app-shell .el-input__wrapper.is-focus,
+        .app-shell .el-input__wrapper:focus-within {
+            box-shadow: 0 0 0 1px #2367c7 inset, 0 0 0 3px rgba(35, 103, 199, 0.12);
+        }
+
+        .app-shell .el-input__inner,
+        .app-shell .el-select__placeholder,
+        .app-shell .el-select__selected-item {
+            color: #1f2c3a;
+            font-size: 12px;
+        }
+
+        .app-shell .el-input-number__decrease,
+        .app-shell .el-input-number__increase {
+            border-color: #d6dee8;
+            background: #f4f7fa;
+            color: #526171;
+        }
+
+        .app-shell .el-input-number__decrease:hover,
+        .app-shell .el-input-number__increase:hover {
+            color: #2367c7;
+            background: #eef6ff;
+        }
+
+        .app-shell .el-slider {
+            --el-slider-main-bg-color: #2367c7;
+            --el-slider-runway-bg-color: #d8e2ec;
+            --el-slider-stop-bg-color: #ffffff;
+            --el-slider-disabled-color: #aebdcb;
+        }
+
+        .app-shell .el-slider__runway {
+            height: 6px;
+            border: 1px solid #cbd5df;
+            border-radius: 999px;
+            background: #d8e2ec;
+        }
+
+        .app-shell .el-slider__bar {
+            height: 6px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #2c7e6f, #2367c7);
+        }
+
+        .app-shell .el-slider__button {
+            width: 14px;
+            height: 14px;
+            border: 2px solid #2367c7;
+            background: #ffffff;
+            box-shadow: 0 1px 4px rgba(22, 31, 42, 0.22);
+        }
+
+        .app-shell .el-button {
+            border-radius: 4px;
+            font-weight: 700;
+        }
+
+        .app-shell .el-button:not(.el-button--primary) {
+            border-color: #b6cadb;
+            background: #ffffff;
+            color: #2d5e8c;
+        }
+
+        .app-shell .el-button:not(.el-button--primary):hover,
+        .app-shell .el-button:not(.el-button--primary):focus {
+            border-color: #9bbbe7;
+            background: #eef6ff;
+            color: #174f96;
+        }
+
+        .el-popper {
+            --el-bg-color-overlay: #ffffff;
+            --el-border-color-light: #d6dee8;
+            --el-text-color-regular: #405062;
+            --el-fill-color-light: #eef6ff;
+        }
+
+        .el-select-dropdown__item {
+            color: #405062;
+        }
+
+        .el-select-dropdown__item.is-hovering,
+        .el-select-dropdown__item:hover {
+            background: #eef6ff;
+            color: #174f96;
+        }
+
+        .el-select-dropdown__item.is-selected {
+            color: #185a9d;
+            font-weight: 800;
+        }
+
+        .workspace {
+            min-width: 0;
+            min-height: 0;
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            z-index: 0;
+        }
+
+        .studio-workbench {
+            min-width: 0;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            overflow: hidden;
+            background: #071018;
+        }
+

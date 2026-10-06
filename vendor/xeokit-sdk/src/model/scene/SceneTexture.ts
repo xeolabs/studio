@@ -1,0 +1,567 @@
+import {
+  ClampToEdgeWrapping,
+  GIFMediaType,
+  JPEGMediaType,
+  LinearEncoding,
+  LinearFilter,
+  LinearMipmapLinearFilter,
+  LinearMipMapLinearFilter,
+  LinearMipMapNearestFilter,
+  MirroredRepeatWrapping,
+  NearestFilter,
+  NearestMipMapLinearFilter,
+  NearestMipMapNearestFilter,
+  PNGMediaType,
+  RepeatWrapping,
+  sRGBEncoding
+} from "../../base/constants";
+import {createVec4Float64, type Vec4} from "../../base/math/vector";
+import type {
+  SceneTextureImageSource,
+  SceneTextureParams,
+  SceneTexturePixelBuffer,
+  SceneTextureUVTransform
+} from "./SceneTextureParams";
+import type {SceneModel} from "./SceneModel";
+import {SDKErrorType, type SDKResult} from "../../base/core";
+
+/**
+ * A texture in a {@link SceneModel | SceneModel}.
+ *
+ * * Stored in {@link SceneModel.textures | SceneModel.textures}
+ * * Created with {@link SceneModel.createTexture | SceneModel.createTexture}
+ * * Referenced by {@link SceneMaterial.colorTexture | SceneMaterial.colorTexture},
+ * {@link SceneMaterial.metallicRoughnessTexture | SceneMaterial.metallicRoughnessTexture},
+ * {@link SceneMaterial.occlusionTexture | SceneMaterial.occlusionTexture} and {@link SceneMaterial.emissiveTexture | SceneMaterial.emissiveTexture}
+ *
+ * See {@link model!scene | @xeokit/sdk/model/scene}   for usage.
+ */
+export class SceneTexture {
+
+  /**
+   * ID for the texture.
+   */
+  id: string;
+
+  /**
+   * URL to fetch the image from. Any URL form (`http(s):`, `blob:`,
+   * `data:`). `toParams` writes serialised images here as data URLs.
+   */
+  src?: string;
+
+  /**
+   * Raw pixel buffer with explicit dimensions, normalised to a DOM
+   * `ImageData` (see {@link imageData} getter / setter).
+   *
+   * @internal
+   */
+  private _imageData?: ImageData;
+
+  /**
+   * Transcoded / compressed texture data.
+   */
+  buffers?: ArrayBuffer[];
+
+  /**
+   * Already-decoded image source the renderer can hand straight to
+   * `texSubImage2D` — `HTMLImageElement`, `HTMLCanvasElement`,
+   * `ImageBitmap`, or `OffscreenCanvas`.
+   */
+  image?: SceneTextureImageSource;
+
+  /**
+   * Pixel height of the texture.
+   */
+  height: number;
+
+  /**
+   * Pixel width of the texture.
+   */
+  width: number;
+
+  /**
+   * True if the texture is compressed.
+   */
+  compressed: boolean;
+
+  /**
+   * Media type of this SceneTexture.
+   *
+   * Supported values are {@link base!constants.GIFMediaType | GIFMediaType}, {@link base!constants.PNGMediaType | PNGMediaType} and {@link base!constants.JPEGMediaType | JPEGMediaType}.
+   *
+   * Ignored for compressed textures.
+   */
+  mediaType?: number;
+
+  /**
+   * How the texture is sampled when a texel covers more than one pixel.
+   *
+   * Supported values are {@link base!constants.LinearFilter | LinearFilter} and {@link base!constants.NearestFilter | NearestFilter}.
+   */
+  magFilter: number;
+
+  /**
+   * How the texture is sampled when a texel covers less than one pixel. Supported values
+   * are {@link base!constants.LinearMipmapLinearFilter | LinearMipmapLinearFilter}, {@link base!constants.LinearMipMapNearestFilter | LinearMipMapNearestFilter},
+   * {@link base!constants.NearestMipMapNearestFilter | NearestMipMapNearestFilter}, {@link base!constants.NearestMipMapLinearFilter | NearestMipMapLinearFilter}
+   * and {@link base!constants.LinearMipMapLinearFilter | LinearMipMapLinearFilter}.
+   *
+   * Ignored for compressed textures.
+   */
+  minFilter: number;
+
+  /**
+   * S wrapping mode.
+   *
+   * Supported values are {@link base!constants.ClampToEdgeWrapping | ClampToEdgeWrapping}, {@link base!constants.MirroredRepeatWrapping | MirroredRepeatWrapping} and {@link base!constants.RepeatWrapping | RepeatWrapping}.
+   *
+   * Ignored for compressed textures.
+   */
+  wrapS: number;
+
+  /**
+   * T wrapping mode.
+   *
+   * Supported values are {@link base!constants.ClampToEdgeWrapping | ClampToEdgeWrapping}, {@link base!constants.MirroredRepeatWrapping | MirroredRepeatWrapping} and {@link base!constants.RepeatWrapping | RepeatWrapping}.
+   *
+   * Ignored for compressed textures.
+   */
+  wrapT: number;
+
+  /**
+   * R wrapping mode.
+   *
+   * Supported values are {@link base!constants.ClampToEdgeWrapping | ClampToEdgeWrapping}, {@link base!constants.MirroredRepeatWrapping | MirroredRepeatWrapping} and {@link base!constants.RepeatWrapping | RepeatWrapping}.
+   *
+   * Ignored for compressed textures.
+   */
+  wrapR: number;
+
+  /**
+   * Flips this SceneTexture's source data along its vertical axis when ````true````.
+   */
+  flipY: boolean;
+
+  /**
+   * SceneTexture encoding format.
+   *
+   * Supported values are {@link base!constants.LinearEncoding | LinearEncoding} and {@link base!constants.sRGBEncoding | sRGBEncoding}.
+   */
+  encoding: number;
+
+  /**
+   * RGBA color to preload the texture with.
+   */
+  preloadColor: Vec4;
+
+  /**
+   * Texture-coordinate affine transform applied before sampling.
+   *
+   * Stored as `[a, b, c, d, e, f]`, where:
+   *
+   * `u' = a * u + c * v + e`
+   *
+   * `v' = b * u + d * v + f`
+   *
+   * @internal
+   */
+  private _uvTransform: SceneTextureUVTransform;
+
+  /**
+   * Mipmap opt-in. `true` routes meshes whose materials reference
+   * this SceneTexture into a mipmap-bearing batch; the per-batch
+   * atlas is allocated with a full mip pyramid and sampled
+   * trilinearly. Default `false`.
+   */
+  readonly mipmap: boolean;
+
+  /**
+   * Estimated uncompressed memory footprint used by
+   * {@link SceneModelStats.textureBytes}.
+   * @internal
+   */
+  textureBytes: number;
+
+  /**
+   * @private
+   */
+  channel: number;
+
+  /**
+   * The SceneModel that this texture belongs to.
+   */
+  public model: SceneModel;
+
+  /**
+   * The count of {@link SceneMaterial | SceneMaterials} that
+   * reference this SceneTexture (in any of the colour, normals,
+   * metallic-roughness, occlusion, or emissive slots). SceneModel updates this
+   * count as materials are created and destroyed. Used by {@link destroy} to
+   * refuse destruction while at least one material still references the texture
+   * (the same guard
+   * {@link SceneGeometry.destroy} and {@link SceneMaterial.destroy}
+   * carry).
+   */
+  numMaterials: number;
+
+  /**
+   * True if this SceneTexture has been destroyed.
+   */
+  public destroyed: boolean = false;
+
+  /**
+   * @private
+   */
+  constructor(sceneModel: SceneModel, params: SceneTextureParams) {
+    this.model = sceneModel;
+    this.id = params.id;
+    this.src = params.src;
+    this.image = params.image;
+    // Direct field assignment — the setter would fire the change event,
+    // which is incorrect during construction (no listeners are attached
+    // yet, and the renderer learns about new textures via the
+    // `onSceneTextureCreated` path the SceneModel fires on createTexture).
+    this._imageData = normalizeImageData(params.imageData);
+    this.buffers = params.buffers;
+    const sourceSize = getTextureSize(this._imageData || this.image);
+    this.width = params.width ?? sourceSize.width;
+    this.height = params.height ?? sourceSize.height;
+    this.compressed = params.compressed === true;
+    this.mediaType = params.mediaType;
+    this.minFilter = params.minFilter || LinearMipMapNearestFilter;
+    this.magFilter = params.magFilter || LinearFilter;
+    this.wrapS = params.wrapS || RepeatWrapping;
+    this.wrapT = params.wrapT || RepeatWrapping;
+    this.wrapR = params.wrapR || RepeatWrapping
+    this.flipY = params.flipY === true;
+    this.encoding = params.encoding || LinearEncoding;
+    this.preloadColor = createVec4Float64(params.preloadColor || [1, 1, 1, 1]);
+    this._uvTransform = normalizeUVTransform(params.uvTransform);
+    this.mipmap = params.mipmap === true;
+    this.textureBytes = estimateTextureBytes(this._imageData || this.image || this);
+    this.channel = 0;
+    this.numMaterials = 0;
+  }
+
+  /**
+   * Returns a JSON-serializable object containing this SceneTexture's
+   * parameters.
+   *
+   * `image` (canvas / HTMLImage / ImageBitmap / OffscreenCanvas) isn't
+   * JSON-serialisable, so it gets rendered through a 2D canvas and
+   * folded into `src` as a PNG data URL — `src` is the one canonical
+   * field for "encoded image, please decode it." `imageData` (raw
+   * pixels) is emitted as a `{ data, width, height }` plain object so
+   * the typed array survives `JSON.stringify`. `buffers` and the rest
+   * of the sampler state pass straight through.
+   */
+  toParams(): SDKResult<SceneTextureParams> {
+    if (this.destroyed) {
+      return this.model.scene.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[SceneTexture.toParams] Cannot get params of destroyed SceneTexture '${this.id}'`
+      });
+    }
+    return {
+      ok: true, value: {
+        id: this.id,
+        // Prefer an existing src; only synthesize from `image` when
+        // there isn't one already so we don't quietly drop the user's
+        // own URL on a round-trip.
+        src: this.src ?? serializeImageToDataURL(this.image),
+        imageData: serializeImageData(this.imageData),
+        buffers: this.buffers,
+        width: this.width,
+        height: this.height,
+        compressed: this.compressed,
+        mediaType: this.mediaType,
+        minFilter: this.minFilter,
+        magFilter: this.magFilter,
+        wrapS: this.wrapS,
+        wrapT: this.wrapT,
+        wrapR: this.wrapR,
+        flipY: this.flipY,
+        encoding: this.encoding,
+        preloadColor: <Vec4>Array.from(this.preloadColor),
+        uvTransform: <SceneTextureUVTransform>Array.from(this._uvTransform),
+        mipmap: this.mipmap
+      }
+    };
+  }
+
+  /**
+   * The raw pixel buffer backing this SceneTexture, or `undefined` for
+   * image-element / encoded-buffer textures.
+   */
+  get imageData(): ImageData | undefined {
+    return this._imageData;
+  }
+
+  /**
+   * Replace this SceneTexture's pixel buffer.
+   *
+   * Accepts either a DOM `ImageData` or the JSON-friendly
+   * `{data, width, height}` form (normalised to `ImageData` here).
+   * Every assignment fires `Scene.events.onSceneTextureImageDataChanged`
+   * so the renderer can re-upload the pixels into its atlas sub-rect
+   * via `texSubImage2D` — no batch / mesh / material rebuild.
+   *
+   * The setter fires unconditionally on every assignment (no identity
+   * skip), so callers that mutate the bytes of an existing `ImageData`
+   * in place can re-trigger the upload by reassigning the same buffer:
+   * `texture.imageData = texture.imageData`.
+   */
+  set imageData(value: ImageData | SceneTexturePixelBuffer | undefined) {
+    if (this.destroyed) {
+      this.model.scene.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[SceneTexture.imageData] Cannot set imageData on destroyed SceneTexture '${this.id}'`,
+      });
+      return;
+    }
+    const oldTextureBytes = this.textureBytes;
+    this._imageData = normalizeImageData(value);
+    const sourceSize = getTextureSize(this._imageData || this.image || this);
+    this.width = sourceSize.width;
+    this.height = sourceSize.height;
+    this.textureBytes = estimateTextureBytes(this._imageData || this.image);
+    this.model.stats.textureBytes += this.textureBytes - oldTextureBytes;
+    if (this._imageData) {
+      this.model.scene.events.onSceneTextureImageDataChanged.dispatch(this.model.scene, this);
+    }
+  }
+
+  /**
+   * Texture-coordinate affine transform applied before sampling this texture.
+   *
+   * Assign a new six-number array to animate or otherwise change the transform.
+   * Directly mutating the returned array will not dispatch a renderer update.
+   */
+  get uvTransform(): SceneTextureUVTransform {
+    return <SceneTextureUVTransform>Array.from(this._uvTransform);
+  }
+
+  set uvTransform(value: SceneTextureUVTransform) {
+    if (this.destroyed) {
+      this.model.scene.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[SceneTexture.uvTransform] Cannot set uvTransform on destroyed SceneTexture '${this.id}'`,
+      });
+      return;
+    }
+    this._uvTransform = normalizeUVTransform(value);
+    this.model.scene.events.onSceneTextureUVTransformChanged.dispatch(this.model.scene, this);
+  }
+
+  /**
+   * Convenience offset for scrolling this texture's coordinates.
+   *
+   * This updates the affine transform's `e` and `f` entries while preserving
+   * scale / rotation / shear.
+   */
+  get uvOffset(): [number, number] {
+    return [this._uvTransform[4], this._uvTransform[5]];
+  }
+
+  set uvOffset(value: [number, number]) {
+    if (this.destroyed) {
+      this.model.scene.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[SceneTexture.uvOffset] Cannot set uvOffset on destroyed SceneTexture '${this.id}'`,
+      });
+      return;
+    }
+    const u = Number(value?.[0]);
+    const v = Number(value?.[1]);
+    if (!Number.isFinite(u) || !Number.isFinite(v)) {
+      this.model.scene.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[SceneTexture.uvOffset] Expected finite [u, v] offset for SceneTexture '${this.id}'`,
+      });
+      return;
+    }
+    this._uvTransform = [this._uvTransform[0], this._uvTransform[1], this._uvTransform[2], this._uvTransform[3], u, v];
+    this.model.scene.events.onSceneTextureUVTransformChanged.dispatch(this.model.scene, this);
+  }
+
+  /**
+   * Destroy this SceneTexture.
+   *
+   * Refuses to destroy while at least one {@link model!scene.SceneMaterial | SceneMaterial} in
+   * the SceneModel still references this texture (in any slot —
+   * colour, normals, metallic-roughness, occlusion, or emissive).
+   * Destroy or replace those materials first. Mirrors
+   * {@link SceneGeometry.destroy} and {@link SceneMaterial.destroy}.
+   */
+  destroy(): SDKResult<void> {
+    if (this.destroyed) {
+      return this.model.scene.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[SceneTexture.destroy] SceneTexture '${this.id}' already destroyed`
+      });
+    }
+    if (this.numMaterials > 0) {
+      return this.model.scene.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[SceneTexture.destroy] Cannot destroy SceneTexture '${this.id}' - ` +
+               `still referenced by ${this.numMaterials} SceneMaterial(s), which you need to destroy first`
+      });
+    }
+    this.image = undefined;
+    // Direct backing-field write — the setter would dispatch a change
+    // event on what's about to become a destroyed texture.
+    this._imageData = undefined;
+    this.buffers = undefined;
+    this.model._destroyTexture(this);
+    this.destroyed = true;
+    return {ok: true, value: undefined};
+  }
+}
+
+/**
+ * Normalise the `imageData` argument to a DOM `ImageData`.
+ *
+ * Callers may pass either an actual `ImageData` (already in canonical
+ * form) or a JSON-friendly `{ data, width, height }` object — the
+ * shape that survives `JSON.stringify` and round-trips through
+ * `toParams`. Plain objects are wrapped into an `ImageData` here so
+ * the renderer's `texSubImage2D` call site sees one type.
+ *
+ * Returns the input unchanged outside a browser (no `ImageData`
+ * constructor) — the renderer is browser-only anyway.
+ *
+ * @internal
+ */
+function normalizeImageData(
+  input: ImageData | SceneTexturePixelBuffer | undefined
+): ImageData | undefined {
+  if (input == null) {
+    return undefined;
+  }
+  if (typeof ImageData !== "undefined" && input instanceof ImageData) {
+    return input;
+  }
+  if (typeof ImageData === "undefined") {
+    // Non-browser environment — leave as-is; the renderer won't run here.
+    return input as any;
+  }
+  const buf = input as SceneTexturePixelBuffer;
+  if (!buf.data || !buf.width || !buf.height) {
+    return undefined;
+  }
+  // ImageData specifically wants Uint8ClampedArray; accept the looser
+  // forms our params type advertises and convert.
+  const clamped = buf.data instanceof Uint8ClampedArray
+    ? buf.data
+    : new Uint8ClampedArray(buf.data instanceof Uint8Array
+        ? buf.data.buffer.slice(buf.data.byteOffset, buf.data.byteOffset + buf.data.byteLength)
+        : buf.data);
+  try {
+    return new ImageData(clamped, buf.width, buf.height);
+  } catch {
+    return undefined;
+  }
+}
+
+function getTextureSize(source: { width?: number; height?: number; naturalWidth?: number; naturalHeight?: number } | undefined): {width: number; height: number} {
+  if (!source) {
+    return {width: 0, height: 0};
+  }
+  const width = source.width || source.naturalWidth || 0;
+  const height = source.height || source.naturalHeight || 0;
+  return {width, height};
+}
+
+function estimateTextureBytes(source: { width?: number; height?: number; naturalWidth?: number; naturalHeight?: number } | undefined): number {
+  const {width, height} = getTextureSize(source);
+  return width > 0 && height > 0 ? width * height * 4 : 0;
+}
+
+function normalizeUVTransform(value: SceneTextureUVTransform | undefined): SceneTextureUVTransform {
+  if (!value) {
+    return [1, 0, 0, 1, 0, 0];
+  }
+  if (value.length !== 6) {
+    return [1, 0, 0, 1, 0, 0];
+  }
+  const transform: SceneTextureUVTransform = [
+    Number(value[0]),
+    Number(value[1]),
+    Number(value[2]),
+    Number(value[3]),
+    Number(value[4]),
+    Number(value[5])
+  ];
+  return transform.every(Number.isFinite) ? transform : [1, 0, 0, 1, 0, 0];
+}
+
+/**
+ * Serialise a raw-pixel `ImageData` to a JSON-friendly plain object
+ * `{ data: number[], width, height }`. The `data` field becomes a
+ * regular array so it survives `JSON.stringify` (typed arrays
+ * serialise as objects with numeric keys, which can't be parsed back).
+ *
+ * @internal
+ */
+function serializeImageData(
+  imageData: ImageData | undefined
+): SceneTexturePixelBuffer | undefined {
+  if (!imageData) {
+    return undefined;
+  }
+  return {
+    data: Array.from(imageData.data),
+    width: imageData.width,
+    height: imageData.height
+  };
+}
+
+/**
+ * Render a runtime image source (canvas / HTMLImage / ImageBitmap /
+ * OffscreenCanvas) through a 2D canvas and return a PNG data URL.
+ * Returns `undefined` outside a browser, when the source has no
+ * dimensions, or when the source is tainted (cross-origin without
+ * CORS — `drawImage`/`toDataURL` throw a `SecurityError`).
+ *
+ * @internal
+ */
+function serializeImageToDataURL(image: SceneTextureImageSource | undefined): string | undefined {
+  if (image == null) {
+    return undefined;
+  }
+  if (typeof document === "undefined") {
+    return undefined;
+  }
+  if (typeof HTMLCanvasElement !== "undefined" && image instanceof HTMLCanvasElement) {
+    try {
+      return image.toDataURL("image/png");
+    } catch {
+      return undefined;
+    }
+  }
+  const w = (image as any).width || (image as any).naturalWidth || 0;
+  const h = (image as any).height || (image as any).naturalHeight || 0;
+  if (w <= 0 || h <= 0) {
+    return undefined;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return undefined;
+  }
+  try {
+    ctx.drawImage(image as CanvasImageSource, 0, 0);
+    return canvas.toDataURL("image/png");
+  } catch {
+    return undefined;
+  }
+}

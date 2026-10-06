@@ -1,0 +1,1939 @@
+import {EventEmitter, SDKErrorType, SDKInternalException, type SDKResult, SDKTask,} from "../../base/core";
+import type {FloatArrayParam} from "../../base/math";
+import type { Vec3} from "../../base/math/vector";
+import type {SceneObject} from "../../model/scene";
+import {AmbientLight} from "./AmbientLight";
+import {Camera} from "./Camera";
+import {createUUID} from "../../base/utils";
+import {createVec3Float64} from "../../base/math/vector";
+import {DirLight} from "./DirLight";
+import {LinesMaterial} from "./LinesMaterial";
+import type {PointLight} from "./PointLight";
+import {PointsMaterial} from "./PointsMaterial";
+import {ResolutionScale} from "./ResolutionScale";
+import {Effects} from "./Effects";
+import {Lights} from "./Lights";
+import {SectionPlane} from "./SectionPlane";
+import type {SectionPlaneParams} from "./SectionPlaneParams";
+import {Texturing} from "./Texturing";
+import type {Viewer} from "./Viewer";
+import {ViewLayer} from "./ViewLayer";
+import type {ViewLayerParams} from "./ViewLayerParams";
+import {ViewObject} from "./ViewObject";
+import type {ViewParams} from "./ViewParams";
+import {EventDispatcher} from "strongly-typed-events";
+import type {CameraParams} from "./CameraParams";
+import type {SAOParams} from "./SAOParams";
+import type {ShadowsParams} from "./ShadowsParams";
+import type {TonemapParams} from "./TonemapParams";
+import type {AntiAliasingParams} from "./AntiAliasingParams";
+import type {BloomParams} from "./BloomParams";
+import type {AtmosphereParams} from "./AtmosphereParams";
+import type {DepthOfFieldParams} from "./DepthOfFieldParams";
+import type {ColorGradingParams} from "./ColorGradingParams";
+import type {EdgesParams} from "./EdgesParams";
+import type {IBLParams} from "./IBLParams";
+import type {HemisphereAmbientParams} from "./HemisphereAmbientParams";
+import type {SkyParams} from "./SkyParams";
+import type {PointsMaterialParams} from "./PointsMaterialParams";
+import type {ResolutionScaleParams} from "./ResolutionScaleParams";
+import type {TexturingParams} from "./TexturingParams";
+import {ViewTransformParams} from "./ViewTransformParams";
+import {ViewTransform} from "./ViewTransform";
+import {ViewStyleBins} from "./ViewStyleBins";
+import type {ViewStyleBinParams} from "./ViewStyleBinParams";
+
+function getSceneObjectLayerId(sceneObject: SceneObject): string {
+  return sceneObject.layerId || "default";
+}
+
+/**
+ * Event that signifies the beginning of a canvas snapshot captured with
+ */
+export interface SnapshotStartedEvent {
+  width: number;
+  height: number;
+}
+
+/**
+ *
+ */
+export interface SnapshotFinishedEvent {
+  width: number;
+  height: number;
+}
+
+/**
+ * An independent view within a {@link Viewer | Viewer}, with its own canvas, Camera and object visual states.
+ *
+ * See {@link viewing!viewer | @xeokit/sdk/viewing/viewer} for usage.
+ */
+class View {
+
+  /**
+   ID of this View, unique within the {@link Viewer | Viewer}.
+   */
+  public readonly id: string;
+
+  /**
+   * The Viewer to which this View belongs.
+   */
+  public readonly viewer: Viewer;
+
+  /**
+   * The tileIndex of this View in {@link Viewer.viewList}.
+   * @internal
+   */
+  public viewIndex: number;
+
+  /**
+   * Manages the Camera for this View.
+   */
+  public readonly camera: Camera;
+
+  /**
+   * The HTML canvas.
+   */
+  public htmlElement: HTMLElement;
+
+  /**
+   * Indicates if this View is transparent.
+   */
+  public readonly transparent: boolean;
+
+  /**
+   * Boundary of the canvas in absolute browser window coordinates.
+   * Format is ````[xmin, ymin, xwidth, ywidth]````.
+   */
+  public readonly boundary: number[];
+
+  /**
+   * Aggregates the renderer-effect components for this View — SAO,
+   * Edges, Bloom, Atmosphere, DepthOfField, ColorGrading, Tonemap, AntiAliasing, and Shadows. Reach the
+   * individual effects through {@link Effects.sao},
+   * {@link Effects.edges}, {@link Effects.bloom},
+   * {@link Effects.atmosphere},
+   * {@link Effects.depthOfField},
+   * {@link Effects.colorGrading},
+   * {@link Effects.tonemap}, {@link Effects.antiAliasing}, and
+   * {@link Effects.shadows}.
+   */
+  public readonly effects: Effects;
+
+  /**
+   * Aggregates the environment-illumination components for this View
+   * — cubemap {@link IBL} at {@link Lights.ibl}, plus the analytical
+   * {@link HemisphereAmbient | hemispheric ambient} at
+   * {@link Lights.hemispheric}.
+   */
+  public readonly lights: Lights;
+
+  /**
+   * Configures when textures are rendered for this View.
+   */
+  public readonly texturing: Texturing;
+
+  /**
+   * User-defined bins that style ViewObjects in this View.
+   *
+   * No style-bin ID is created automatically or treated specially by the
+   * viewer. Applications define whichever bins they need.
+   */
+  public readonly styleBins: ViewStyleBins;
+
+  /**
+   * Configures resolution scaling for this View.
+   */
+  readonly resolutionScale: ResolutionScale;
+
+  /**
+   * Configures the appearance of point primitives belonging to {@link ViewObject | ViewObjects} in this View .
+   */
+  readonly pointsMaterial: PointsMaterial;
+
+  /**
+   * Configures the appearance of lines belonging to {@link ViewObject | ViewObjects} in this View.
+   */
+  readonly linesMaterial: LinesMaterial;
+
+  /**
+   * Map of the all {@link ViewObject | ViewObjects} in this View.
+   *
+   * Each {@link viewing!viewer.ViewObject | ViewObject} is mapped here by {@link ViewObject.id}.
+   *
+   * The View automatically ensures that there is a {@link viewing!viewer.ViewObject | ViewObject} here for
+   * each {@link viewing!viewer.ViewObject | ViewObject} in the {@link Viewer | Viewer}
+   */
+  readonly objects: { [key: string]: ViewObject };
+
+  /**
+   * Map of the currently visible {@link ViewObject | ViewObjects} in this View.
+   *
+   * A ViewObject is visible when {@link ViewObject.visible} is true.
+   *
+   * Each {@link viewing!viewer.ViewObject | ViewObject} is mapped here by {@link ViewObject.id}.
+   */
+  readonly visibleObjects: { [key: string]: ViewObject };
+
+
+  /**
+   * Map of currently colorized {@link ViewObject | ViewObjects} in this View.
+   *
+   * Each {@link viewing!viewer.ViewObject | ViewObject} is mapped here by {@link ViewObject.id}.
+   */
+  readonly colorizedObjects: { [key: string]: ViewObject };
+
+  /**
+   * Map of {@link ViewObject | ViewObjects} in this View whose opacity has been updated.
+   *
+   * Each {@link viewing!viewer.ViewObject | ViewObject} is mapped here by {@link ViewObject.id}.
+   */
+  readonly opacityObjects: { [key: string]: ViewObject };
+
+  /**
+   * Map of {@link SectionPlane}s in this View.
+   *
+   * Each {@link SectionPlane} is mapped here by {@link SectionPlane.id}.
+   */
+  readonly sectionPlanes: { [key: string]: SectionPlane };
+
+  /**
+   * List of {@link SectionPlane}s in this View.
+   */
+  readonly sectionPlanesList: SectionPlane[] = [];
+
+  /**
+   * Id-keyed registry of legacy {@link AmbientLight} / {@link PointLight} /
+   * {@link DirLight} instances attached to this View. Populated by the
+   * light constructors via {@link View.registerLight}.
+   *
+   * @internal
+   */
+  readonly lightSources: { [key: string]: AmbientLight | PointLight | DirLight };
+
+  /**
+   * List of legacy light sources in this View, in registration order.
+   *
+   * @internal
+   */
+  readonly lightsList: (AmbientLight | PointLight | DirLight)[] = [];
+
+  gammaOutput: boolean;
+
+  /**
+   * Set of {@link ViewTransform}s in this View.
+   */
+  readonly transforms: { [key: string]: ViewTransform };
+
+  /**
+   * Map of the all {@link ViewLayer}s in this View.
+   *
+   * Each {@link ViewLayer} is mapped here by {@link ViewLayer.id}.
+   */
+  readonly layers: { [key: string]: ViewLayer };
+
+  /**
+   * Emits an event each time the canvas boundary changes.
+   *
+   * @private
+   */
+  readonly onBoundary: EventEmitter<View, FloatArrayParam>;
+
+  /**
+   * True if this View has been destroyed.
+   */
+  public destroyed: boolean = false;
+
+  private readonly _representationEnabled = new WeakMap<import("../../model/scene/SceneMesh").SceneMesh, boolean>();
+
+  /**
+   * Enables a bound representation in this View. Disabling selects its authored fallback;
+   * an augmenting binding always retains ordinary equipment geometry.
+   *
+   * @param mesh Bound mesh in the Viewer's Scene.
+   * @param enabled Whether the representation participates in drawing and picking.
+   * @returns InvalidInput for a foreign/destroyed mesh, otherwise success.
+   */
+  setRepresentationEnabled(mesh: import("../../model/scene/SceneMesh").SceneMesh, enabled: boolean): SDKResult<void> {
+    if (this.destroyed || mesh.destroyed || mesh.model.scene !== this.viewer.scene || typeof enabled !== "boolean") {
+      return {ok: false, type: SDKErrorType.InvalidInput, error: "Invalid View representation override"};
+    }
+    this._representationEnabled.set(mesh, enabled);
+    this.needsRender();
+    return {ok: true, value: undefined};
+  }
+
+  /** Queries this View's override; representation bindings are enabled by default. */
+  getRepresentationEnabled(mesh: import("../../model/scene/SceneMesh").SceneMesh): boolean {
+    return this._representationEnabled.get(mesh) ?? true;
+  }
+
+  private _autoLayers: boolean;
+  private _backgroundColor: FloatArrayParam;
+  private _backgroundColorFromAmbientLight: boolean;
+  private _numObjects: number;
+  private _objectIds: string[] | null;
+  private _numVisibleObjects: number;
+  private _visibleObjectIds: string[] | null;
+  private _numColorizedObjects: number;
+  private _colorizedObjectIds: string[] | null;
+  private _numOpacityObjects: number;
+  private _opacityObjectIds: string[] | null;
+  private _lightsHash: string | null = null;
+  private _sectionPlanesHash: string | null = null;
+  private _snapshotBegun: boolean;
+  private _autoCanvas: boolean;
+  private _needsRender: boolean;
+  private _dispatchingViewUpdate: boolean;
+  private _needsRenderAfterViewUpdate: boolean;
+  private _resizeObserver: ResizeObserver | null = null;
+  private _windowResizeListener: (() => void) | null = null;
+  private _fireViewUpdatedEventTask: SDKTask;
+
+  /**
+   * @private
+   */
+  constructor(viewer: Viewer, viewParams: ViewParams) {
+
+    this.id = viewParams.id || createUUID();
+    this.viewer = viewer;
+
+    let canvas;
+
+    if (viewParams.htmlElement || viewParams.elementId) {
+      canvas = // Canvas is actually a generic HTMLElement, but we think of it as a canvas
+          viewParams.htmlElement || document.getElementById(<string>viewParams.elementId);
+      if (!(canvas instanceof HTMLElement)) {
+        throw new SDKInternalException("[View.constructor] Mandatory View config expected: valid HTMLElement");
+      }
+      this._autoCanvas = false;
+    }
+
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      canvas.style.position = "absolute";
+      canvas.style.zIndex = "100000";
+      canvas.style.width = '600px';
+      canvas.style.height = '500px';
+      canvas.style.position = 'absolute';
+      canvas.style.background = 'white';
+      canvas.style.border = '0';
+      document.body.appendChild(canvas);
+      this._autoCanvas = true;
+    }
+
+    this.htmlElement = canvas;
+    this.viewIndex = 0;
+    this.objects = {};
+    this.visibleObjects = {};
+    this.colorizedObjects = {};
+    this.opacityObjects = {};
+    this.sectionPlanes = {};
+    this.sectionPlanesList = [];
+    this.lightSources = {};
+    this.lightsList = [];
+    this.layers = {};
+    this.transforms = {};
+
+    this._numObjects = 0;
+    this._objectIds = null;
+    this._numVisibleObjects = 0;
+    this._visibleObjectIds = null;
+    this._numColorizedObjects = 0;
+    this._colorizedObjectIds = null;
+    this._numOpacityObjects = 0;
+    this._opacityObjectIds = null;
+    this.gammaOutput = true;
+    this._snapshotBegun = false;
+    this._needsRender = false;
+    this._dispatchingViewUpdate = false;
+    this._needsRenderAfterViewUpdate = false;
+
+    this._sectionPlanesHash = null;
+    this._lightsHash = null;
+
+    // this.canvas = new View(this, {
+    //     canvas: canvas,
+    //     transparent: !!viewParams.transparent,
+    //     backgroundColor: viewParams.backgroundColor,
+    //     backgroundColorFromAmbientLight: !!viewParams.backgroundColorFromAmbientLight,
+    //     premultipliedAlpha: !!viewParams.premultipliedAlpha
+    // });
+    //
+    // this.viewCanvasBoundary = new EventEmitter(
+    //   new EventDispatcher<View, IntArrayParam>()
+    // );
+
+    this._backgroundColor = createVec3Float64([
+      viewParams.backgroundColor ? viewParams.backgroundColor[0] : 1,
+      viewParams.backgroundColor ? viewParams.backgroundColor[1] : 1,
+      viewParams.backgroundColor ? viewParams.backgroundColor[2] : 1,
+    ]);
+    this._backgroundColorFromAmbientLight =
+        !!viewParams.backgroundColorFromAmbientLight;
+    this.transparent = !!viewParams.transparent;
+    // this.htmlElement.width = this.htmlElement.clientWidth;
+    // this.htmlElement.height = this.htmlElement.clientHeight;
+    this.boundary = [
+      this.htmlElement.offsetLeft,
+      this.htmlElement.offsetTop,
+      this.htmlElement.clientWidth,
+      this.htmlElement.clientHeight,
+    ];
+
+    this.camera = new Camera(this, viewParams.camera || {});
+
+    this.effects = new Effects(this, viewParams.effects || {});
+
+    this.lights = new Lights(this, viewParams.lights || {});
+
+    if (viewParams.effects?.ibl) {
+      this.lights.ibl.fromParams(viewParams.effects.ibl);
+    }
+
+    this.texturing = new Texturing(this, viewParams.texturing || {});
+
+    this.styleBins = new ViewStyleBins(this, viewParams.styleBins || []);
+
+    this.resolutionScale = new ResolutionScale(this, viewParams.resolutionScale || {
+      enabled: false,
+      resolutionScale: 0.5
+    });
+
+    this.pointsMaterial = new PointsMaterial(this, viewParams.pointsMaterial || {
+      pointSize: 1,
+      roundPoints: true,
+      perspectivePoints: true,
+      minPerspectivePointSize: 1,
+      maxPerspectivePointSize: 6,
+      filterIntensity: false,
+      minIntensity: 0,
+      maxIntensity: 1,
+    });
+
+    this.linesMaterial = new LinesMaterial(this, {
+      lineWidth: 1,
+    });
+
+    this._autoLayers = viewParams.autoLayers !== false;
+
+    if (viewParams.layers) {
+      for (const viewLayerParams of viewParams.layers) {
+        const existingViewLayer = this.layers[viewLayerParams.id];
+        if (!existingViewLayer) {
+          this.createLayer(viewLayerParams);
+        }
+      }
+    }
+
+    new AmbientLight(this, {
+      color: [1.0, 1.0, 1.0],
+      intensity: 0.35
+    });
+
+    new DirLight(this, {
+      dir: [-0.8, -1.0, -0.5],
+      color: [1.0, 1.0, 1.0],
+      intensity: 1.0,
+      space: "world"
+    });
+
+    this.onBoundary = new EventEmitter(new EventDispatcher<View, FloatArrayParam>());
+
+    // Publish htmlElement size and position changes via ResizeObserver and window resize.
+    // ResizeObserver fires when the element's content box changes size.
+    // window 'resize' catches position-only changes (element moved when window resizes).
+
+    const updateBoundary = () => {
+      const el = this.htmlElement;
+      const newLeft = el.offsetLeft;
+      const newTop = el.offsetTop;
+      const newWidth = el.clientWidth;
+      const newHeight = el.clientHeight;
+      const b = this.boundary;
+      if (newLeft !== b[0] || newTop !== b[1] || newWidth !== b[2] || newHeight !== b[3]) {
+        b[0] = newLeft;
+        b[1] = newTop;
+        b[2] = newWidth;
+        b[3] = newHeight;
+        this.onBoundary.dispatch(this, b);
+        this.viewer.events.onViewCanvasBoundaryChanged.dispatch(this, b);
+        // Boundary change means the drawing buffer needs to
+        // resize and redraw. Mark the View dirty so the renderer
+        // schedules a frame — without this, a View hosted inside
+        // a floating ViewPanel stays frozen between window-level
+        // resize events because ResizeObserver alone has no path
+        // into the render loop.
+        this.needsRender();
+      }
+    };
+
+    this._resizeObserver = new ResizeObserver(() => updateBoundary());
+    this._resizeObserver.observe(this.htmlElement);
+
+    this._windowResizeListener = updateBoundary;
+    window.addEventListener('resize', this._windowResizeListener);
+
+    this._fireViewUpdatedEventTask = new SDKTask({
+      name: "View._fireViewUpdatedEventTask",
+      task: () => {
+        if (this._needsRender) {
+          if (!this.viewer._requestViewRender(this)) {
+            this._needsRender = false;
+            return;
+          }
+          // Camera updates are lazy ComputeStage tasks. If a camera property
+          // changes after the runner has already passed ComputeStage, flush it
+          // before render listeners classify/draw from camera-dependent state.
+          this._dispatchingViewUpdate = true;
+          this._needsRenderAfterViewUpdate = false;
+          try {
+            void this.camera.projMatrix;
+            void this.camera.viewMatrix;
+            this.viewer.events.onViewUpdated.dispatch(this, this);
+          } finally {
+            this._dispatchingViewUpdate = false;
+          }
+          if (this._needsRenderAfterViewUpdate) {
+            this._needsRenderAfterViewUpdate = false;
+            setTimeout(() => {
+              if (this._needsRender && !this.destroyed) {
+                this._fireViewUpdatedEventTask.schedule();
+              }
+            }, 0);
+          } else {
+            this._needsRender = false;
+          }
+        }
+      },
+      stage: SDKTask.RenderStage
+    });
+    if (this._needsRender) {
+      this._fireViewUpdatedEventTask.schedule();
+    }
+  }
+
+  /**
+   * @private
+   */
+  _attachSceneObject(sceneObject: SceneObject) {
+    const objectId = sceneObject.id;
+    if (this.objects[objectId]) {
+      return;
+    }
+
+    const layerId = getSceneObjectLayerId(sceneObject);
+    let viewLayer = this.layers[layerId];
+    if (!viewLayer) {
+      if (!this._autoLayers) {
+        return;
+      }
+      viewLayer = new ViewLayer({
+        id: layerId,
+        view: this,
+        viewer: this.viewer,
+      });
+      this.layers[layerId] = viewLayer;
+      this.viewer.events.onViewLayerCreated.dispatch(this, viewLayer);
+    }
+    const viewObject = new ViewObject(viewLayer, sceneObject);
+    viewLayer._attachViewObject(viewObject);
+    this._attachViewObject(viewObject);
+    this.viewer.events.onViewObjectCreated.dispatch(this, viewObject);
+    this.needsRender();
+  }
+
+  /**
+   * @private
+   */
+  private _attachViewObject(viewObject: ViewObject) {
+    const objectId = viewObject.id;
+    if (this.objects[objectId]) {
+      return;
+    }
+    this.objects[objectId] = viewObject;
+    this._numObjects++;
+    this._objectIds = null; // Lazy regenerate
+  }
+
+  /**
+   * @private
+   */
+  _detachSceneObject(sceneObject: SceneObject) {
+    const viewObject = this.objects[sceneObject.id];
+    if (viewObject) {
+      this._destroyViewObject(viewObject);
+    }
+  }
+
+  /**
+   * @private
+   */
+  private _deattachViewObject(viewObject: ViewObject) {
+    const objectId = viewObject.id;
+    if (!this.objects[objectId]) {
+      return;
+    }
+    delete this.objects[objectId];
+    this._numObjects--;
+    this._objectIds = null; // Lazy regenerate
+
+    if (this.visibleObjects[objectId]) {
+      delete this.visibleObjects[objectId];
+      this._numVisibleObjects--;
+      this._visibleObjectIds = null;
+    }
+    if (this.colorizedObjects[objectId]) {
+      delete this.colorizedObjects[objectId];
+      this._numColorizedObjects--;
+      this._colorizedObjectIds = null;
+    }
+    if (this.opacityObjects[objectId]) {
+      delete this.opacityObjects[objectId];
+      this._numOpacityObjects--;
+      this._opacityObjectIds = null;
+    }
+  }
+
+  /**
+   * Sets whether this View will automatically create {@link ViewLayer | ViewLayers} on-demand
+   * as {@link ViewObject | ViewerObjects} are created.
+   *
+   * When ````true```` (default), the View will automatically create {@link ViewLayer | ViewLayers} as needed for each new
+   * {@link ViewObject.layerId} encountered, including a "default" ViewLayer for ViewerObjects that have no
+   * layerId. This "default" ViewLayer ensures that a ViewObject is created in the View for every SceneObject that is created.
+   *
+   * If you set this ````false````, however, then the View will only create {@link ViewObject | ViewObjects} for
+   * {@link model!scene.SceneObject | SceneObjects} that have a {@link model!scene.SceneObject.layerId | layerId} that matches the ID of a
+   * {@link ViewLayer} that you have explicitly created previously with {@link View.createLayer}.
+   *
+   * Setting this parameter false enables Views to contain only the ViewObjects that they actually need to show, i.e. to represent only
+   * ViewerObjects that they need to view. This enables a View to avoid wastefully creating and maintaining ViewObjects for ViewerObjects
+   * that it never needs to show.
+   *
+   * Default value is `true``.
+   *
+   * @param autoLayers The new value for atuoLayers
+   */
+  set autoLayers(autoLayers: boolean) {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.autoLayers] View already destroyed"
+      });
+      return;
+    }
+    if (this._autoLayers === autoLayers) {
+      return;
+    }
+    this._autoLayers = autoLayers;
+    if (autoLayers) {
+      this._createViewObjectsForScene();
+    }
+  }
+
+  private _createViewObjectsForScene() {
+    const scene = this.viewer.scene;
+    if (!scene) {
+      return;
+    }
+    for (const sceneObjectId in scene.objects) {
+      const sceneObject = scene.objects[sceneObjectId];
+      this._attachSceneObject(sceneObject);
+    }
+  }
+
+  private _attachSceneObjectsForLayer(viewLayer: ViewLayer) {
+    const scene = this.viewer.scene;
+    if (!scene) {
+      return;
+    }
+    for (const sceneObjectId in scene.objects) {
+      const sceneObject = scene.objects[sceneObjectId];
+      if (getSceneObjectLayerId(sceneObject) === viewLayer.id) {
+        this._attachSceneObject(sceneObject);
+      }
+    }
+  }
+
+  /**
+   * Gets whether this View will automatically create {@link ViewLayer | ViewLayers} on-demand
+   * as {@link ViewObject | ViewerObjects} are created.
+   */
+  get autoLayers(): boolean {
+    return this._autoLayers;
+  }
+
+  /**
+   * Gets the canvas clear color.
+   *
+   * Default value is ````[1, 1, 1]````.
+   */
+  get backgroundColor(): FloatArrayParam {
+    return this._backgroundColor;
+  }
+
+  /**
+   * Sets the canvas clear color.
+   *
+   * Default value is ````[1, 1, 1]````.
+   */
+  set backgroundColor(value: FloatArrayParam) {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.backgroundColor] View already destroyed"
+      });
+      return;
+    }
+    if (value) {
+      if (value.length < 3) {
+        this.viewer.logError({
+          ok: false,
+          type: SDKErrorType.InvalidInput,
+          error: "[View.backgroundColor] Expected FloatArrayParam with at least 3 elements"
+        });
+        return;
+      }
+      this._backgroundColor[0] = value[0];
+      this._backgroundColor[1] = value[1];
+      this._backgroundColor[2] = value[2];
+    } else {
+      this._backgroundColor[0] = 1.0;
+      this._backgroundColor[1] = 1.0;
+      this._backgroundColor[2] = 1.0;
+    }
+    this.needsRender();
+  }
+
+  /**
+   * Gets whether the canvas clear color will be derived from {@link AmbientLight} or {@link View.backgroundColor}
+   * when {@link View.transparent} is ```true```.
+   *
+   * When {@link View.transparent} is ```true``` and this is ````true````, then the canvas clear color will
+   * be taken from the ambient light color.
+   *
+   * When {@link View.transparent} is ```true``` and this is ````false````, then the canvas clear color will
+   * be taken from {@link View.backgroundColor}.
+   *
+   * Default value is ````true````.
+   */
+  get backgroundColorFromAmbientLight(): boolean {
+    return this._backgroundColorFromAmbientLight;
+  }
+
+  /**
+   * Sets if the canvas background color is derived from an {@link AmbientLight}.
+   *
+   * This only has effect when the canvas is not transparent. When not enabled, the background color
+   * will be the canvas element's HTML/CSS background color.
+   *
+   * Default value is ````true````.
+   */
+  set backgroundColorFromAmbientLight(
+      backgroundColorFromAmbientLight: boolean
+  ) {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.backgroundColorFromAmbientLight] View already destroyed"
+      });
+      return;
+    }
+    this._backgroundColorFromAmbientLight =
+        backgroundColorFromAmbientLight !== false;
+  }
+
+  /**
+   * Gets the gamma factor.
+   */
+  get gammaFactor() {
+    // TODO
+    return 1.0;
+  }
+
+  /**
+   * Gets the number of {@link ViewObject | ViewObjects} in this View.
+   */
+  get numObjects(): number {
+    return this._numObjects;
+  }
+
+  /**
+   * Gets the IDs of the {@link ViewObject | ViewObjects} in this View.
+   */
+  get objectIds(): string[] {
+    if (!this._objectIds) {
+      this._objectIds = Object.keys(this.objects);
+    }
+    return this._objectIds;
+  }
+
+  /**
+   * Gets the number of visible {@link ViewObject | ViewObjects} in this View.
+   */
+  get numVisibleObjects(): number {
+    return this._numVisibleObjects;
+  }
+
+  /**
+   * Gets the IDs of the visible {@link ViewObject | ViewObjects} in this View.
+   */
+  get visibleObjectIds(): string[] {
+    if (!this._visibleObjectIds) {
+      this._visibleObjectIds = Object.keys(this.visibleObjects);
+    }
+    return this._visibleObjectIds;
+  }
+
+  /**
+   * Gets the number of colorized {@link ViewObject | ViewObjects} in this View.
+   */
+  get numColorizedObjects(): number {
+    return this._numColorizedObjects;
+  }
+
+  /**
+   * Gets the IDs of the colorized {@link ViewObject | ViewObjects} in this View.
+   */
+  get colorizedObjectIds(): string[] {
+    if (!this._colorizedObjectIds) {
+      this._colorizedObjectIds = Object.keys(this.colorizedObjects);
+    }
+    return this._colorizedObjectIds;
+  }
+
+  /**
+   * Gets the IDs of the {@link ViewObject | ViewObjects} in this View that have updated opacities.
+   */
+  get opacityObjectIds(): string[] {
+    if (!this._opacityObjectIds) {
+      this._opacityObjectIds = Object.keys(this.opacityObjects);
+    }
+    return this._opacityObjectIds;
+  }
+
+  /**
+   * Gets the number of {@link ViewObject | ViewObjects} in this View that have updated opacities.
+   */
+  get numOpacityObjects(): number {
+    return this._numOpacityObjects;
+  }
+
+  /**
+   * Called by ViewObject.visible setter.
+   * @private
+   */
+  objectVisibilityUpdated(
+      viewObject: ViewObject,
+      visible: boolean,
+      notify: boolean = true
+  ) {
+    if (visible) {
+      this.visibleObjects[viewObject.id] = viewObject;
+      this._numVisibleObjects++;
+    } else {
+      delete this.visibleObjects[viewObject.id];
+      this._numVisibleObjects--;
+    }
+    this._visibleObjectIds = null; // Lazy regenerate
+    if (notify) {
+      this.viewer.events.onViewObjectVisibleChanged.dispatch(this, viewObject);
+    }
+    this.needsRender();
+  }
+
+  /**
+   * Called by ViewObject.clippable setter.
+   * @private
+   */
+  objectClippableUpdated(
+      viewObject: ViewObject,
+      clippable: boolean,
+      notify: boolean = true
+  ) {
+    // Unlike visibility / xray / highlight / selection, the
+    // clippable flag isn't tracked in a per-View collection —
+    // the renderer is the only consumer. Just dispatch the
+    // event; the renderer subscribes and re-encodes the
+    // per-mesh attribute bit.
+    if (notify) {
+      this.viewer.events.onViewObjectClippableChanged.dispatch(this, viewObject);
+    }
+    this.needsRender();
+  }
+
+  /**
+   * Called by ViewObject.culled setter.
+   * @private
+   */
+  objectCulledUpdated(
+      viewObject: ViewObject,
+      culled: boolean,
+      notify: boolean = true
+  ) {
+    // Like clippable, the culled flag isn't tracked in a per-View
+    // collection — the renderer is its only consumer. Dispatch the
+    // event so the renderer drops/restores the object's meshes in
+    // this view's draw index.
+    if (notify) {
+      this.viewer.events.onViewObjectCulledChanged.dispatch(this, viewObject);
+    }
+    this.needsRender();
+  }
+
+  /**
+   * Called by ViewObject.setStyleBin.
+   * @private
+   */
+  objectStyleBinUpdated(
+      viewObject: ViewObject,
+      styleBinId: string,
+      membership: boolean
+  ) {
+    this.styleBins._objectMembershipUpdated(styleBinId, viewObject, membership);
+    this.viewer.events.onViewObjectStyleBinChanged.dispatch(this, {
+      viewObject,
+      styleBinId,
+      membership
+    });
+    this.needsRender();
+  }
+
+  /**
+   * Called by ViewObject.colorize setter.
+   * @private
+   */
+  objectColorizeUpdated(viewObject: ViewObject, colorized: boolean) {
+    if (colorized) {
+      this.colorizedObjects[viewObject.id] = viewObject;
+      this._numColorizedObjects++;
+    } else {
+      delete this.colorizedObjects[viewObject.id];
+      this._numColorizedObjects--;
+    }
+    this._colorizedObjectIds = null; // Lazy regenerate
+    this.viewer.events.onViewObjectColorizeChanged.dispatch(this, viewObject);
+    this.needsRender();
+  }
+
+  /**
+   * Called by ViewObject.opacity setter.
+   * @private
+   */
+  objectOpacityUpdated(viewObject: ViewObject, opacityUpdated: boolean) {
+    if (opacityUpdated) {
+      this.opacityObjects[viewObject.id] = viewObject;
+      this._numOpacityObjects++;
+    } else {
+      delete this.opacityObjects[viewObject.id];
+      this._numOpacityObjects--;
+    }
+    this._opacityObjectIds = null; // Lazy regenerate
+    this.viewer.events.onViewObjectOpacityChanged.dispatch(this, viewObject);
+    this.needsRender();
+  }
+
+  /**
+   * Called by ViewObject.pickable setter.
+   * @param viewObject
+   * @param pickable
+   */
+  objectPickableUpdated(viewObject: ViewObject, pickable: boolean) {
+    this.viewer.events.onViewObjectPickableChanged.dispatch(this, viewObject);
+    this.needsRender();
+  }
+
+  /**
+   * Creates a {@link SectionPlane} in this View.
+   *
+   * The SectionPlane is then registered in {@link View.sectionPlanes}.
+   *
+   * If a SectionPlane with the given ID already exists, the method returns an error.
+   *
+   * # Usage
+   *
+   * ```typescript
+   * const sectionPlaneResult = view.createSectionPlane({
+   *   id: "mySectionPlane",
+   *   pos: [0, 0, 0],
+   *   dir: [1, 0, 0],
+   * });
+   *
+   * if (!sectionPlaneResult.ok) {
+   *   console.error(sectionPlaneResult.error);
+   * } else {
+   *   const sectionPlane = sectionPlaneResult.value;
+   *   console.log("SectionPlane created:", sectionPlane.id);
+   * }
+   *```
+   *
+   * @param sectionPlaneParams - Configuration parameters for the new {@link SectionPlane}.
+   * @returns A result containing the created {@link SectionPlane} on success,
+   * or an error message on failure.
+   */
+  createSectionPlane(sectionPlaneParams: SectionPlaneParams): SDKResult<SectionPlane> {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.createSectionPlane] View already destroyed"
+      });
+      return;
+    }
+    sectionPlaneParams.id ||= createUUID();
+    if (this.sectionPlanes[sectionPlaneParams.id]) {
+      return this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[View.createSectionPlane] SectionPlane with ID "${sectionPlaneParams.id}" already exists.`
+      });
+    }
+    const sectionPlane = new SectionPlane(this, sectionPlaneParams);
+    this.sectionPlanesList.push(sectionPlane);
+    this.sectionPlanes[sectionPlane.id] = sectionPlane;
+    this._sectionPlanesHash = null;
+    //    this.rebuild();
+    this.viewer.events.onSectionPlaneCreated.dispatch(this, sectionPlane);
+    return {
+      ok: true,
+      value: sectionPlane
+    };
+  }
+
+  /**
+   * Called by a {@link SectionPlane} when destroyed.
+   * @private
+   */
+  _removeSectionPlane(sectionPlane: SectionPlane) {
+    this._deregisterSectionPlane(sectionPlane);
+    this.viewer.events.onSectionPlaneDestroyed.dispatch(this, sectionPlane);
+  }
+
+  /**
+   * Destroys the {@link SectionPlane | SectionPlanes} in this View.
+   */
+  clearSectionPlanes(): void {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.clearSectionPlanes] View already destroyed"
+      });
+      return;
+    }
+    const objectIds = Object.keys(this.sectionPlanes);
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      this.sectionPlanes[objectIds[i]].destroy();
+    }
+    this.sectionPlanesList.length = 0;
+    this._sectionPlanesHash = null;
+  }
+
+  /**
+   * @private
+   */
+  getSectionPlanesHash() {
+    if (this._sectionPlanesHash) {
+      return this._sectionPlanesHash;
+    }
+    if (this.sectionPlanesList.length === 0) {
+      return (this._sectionPlanesHash = ";");
+    }
+    const hashParts = [];
+    for (let i = 0, len = this.sectionPlanesList.length; i < len; i++) {
+      hashParts.push("cp");
+    }
+    hashParts.push(";");
+    this._sectionPlanesHash = hashParts.join("");
+    return this._sectionPlanesHash;
+  }
+
+  /**
+   * @private
+   */
+  registerLight(light: PointLight | DirLight | AmbientLight) {
+    this.lightsList.push(light);
+    this.lightSources[light.id] = light;
+    this._lightsHash = null;
+    this.needsRender();
+  }
+
+  /**
+   * @private
+   */
+  deregisterLight(light: PointLight | DirLight | AmbientLight) {
+    for (let i = 0, len = this.lightsList.length; i < len; i++) {
+      if (this.lightsList[i].id === light.id) {
+        this.lightsList.splice(i, 1);
+        this._lightsHash = null;
+        delete this.lightSources[light.id];
+        this.needsRender();
+        return;
+      }
+    }
+  }
+
+  /**
+   * Destroys the {@link DirLight | DirLights}, {@link PointLight | PointLights} and {@link AmbientLight | AmbientLights} in this View.
+   */
+  clearLights(): void {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.clearLights] View already destroyed"
+      });
+      return;
+    }
+    const lightIds = Object.keys(this.lightSources);
+    for (let i = 0, len = lightIds.length; i < len; i++) {
+      this.lightSources[lightIds[i]].destroy();
+    }
+  }
+
+  /**
+   * @private
+   */
+  getLightsHash() {
+    if (this._lightsHash) {
+      return this._lightsHash;
+    }
+    if (this.lightsList.length === 0) {
+      return (this._lightsHash = ";");
+    }
+    const hashParts = [];
+    const lights = this.lightsList;
+    for (let i = 0, len = lights.length; i < len; i++) {
+      const light: any = lights[i];
+      hashParts.push("/");
+      hashParts.push(light instanceof DirLight ? "d" : "p");
+      hashParts.push(light.space === "world" ? "w" : "v");
+      if (light.castsShadow) {
+        hashParts.push("sh");
+      }
+    }
+    // if (this.lightMaps.length > 0) {
+    //     hashParts.push("/lm");
+    // }
+    // if (this.reflectionMaps.length > 0) {
+    //     hashParts.push("/rm");
+    // }
+    hashParts.push(";");
+    this._lightsHash = hashParts.join("");
+    return this._lightsHash;
+  }
+
+  /**
+   * @internal
+   */
+  needsRender() {
+    if (this._needsRender) {
+      this._needsRenderAfterViewUpdate = true;
+      return;
+    }
+    if (!this.viewer._requestViewRender(this)) {
+      return;
+    }
+    this._needsRender = true;
+    if (this._fireViewUpdatedEventTask) {
+      this._fireViewUpdatedEventTask.schedule();
+    }
+  }
+
+  private readonly _ambientColorAndIntensity: FloatArrayParam = new Float32Array([0.5, 0.5, 0.5, 1]);
+
+  /**
+   * @private
+   */
+  getAmbientColorAndIntensity(): FloatArrayParam {
+    return this._ambientColorAndIntensity;
+  }
+
+  /**
+   * Updates the visibility of the given {@link ViewObject | ViewObjects} in this View.
+   *
+   * - Updates {@link ViewObject.visible} on the Objects with the given IDs.
+   * - Updates {@link View.visibleObjects} and {@link View.numVisibleObjects}.
+   *
+   * @param {string[]} objectIds Array of {@link ViewObject.id} values.
+   * @param visible Whether or not to cull.
+   * @returns True if any {@link ViewObject | ViewObjects} were updated, else false if all updates were redundant and not applied.
+   */
+  setObjectsVisible(objectIds: string[], visible: boolean): boolean {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.setObjectsVisible] View already destroyed"
+      });
+      return;
+    }
+
+    let changed = false;
+    const objects = this.objects;
+
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const viewObject = objects[objectIds[i]];
+      if (!viewObject) {
+        continue;
+      }
+      if (viewObject.visible !== visible) {
+        viewObject.visible = visible;
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  /**
+   * Updates the collidability of the given {@link ViewObject | ViewObjects} in this View.
+   *
+   * Updates {@link ViewObject.collidable} on the Objects with the given IDs.
+   *
+   * @param {string[]} objectIds Array of {@link ViewObject.id} values.
+   * @param collidable Whether or not to cull.
+   * @returns True if any {@link ViewObject | ViewObjects} were updated, else false if all updates were redundant and not applied.
+   */
+  setObjectsCollidable(objectIds: string[], collidable: boolean): boolean {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.setObjectsCollidable] View already destroyed"
+      });
+      return;
+    }
+
+    let changed = false;
+    const objects = this.objects;
+
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const viewObject = objects[objectIds[i]];
+      if (!viewObject) {
+        continue;
+      }
+      if (viewObject.collidable !== collidable) {
+        viewObject.collidable = collidable;
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  /**
+   * Updates the culled status of the given {@link ViewObject | ViewObjects} in this View.
+   *
+   * Updates {@link ViewObject.culled} on the Objects with the given IDs.
+   *
+   * @param {string[]} objectIds Array of {@link ViewObject.id} values.
+   * @param culled Whether or not to cull.
+   * @returns True if any {@link ViewObject | ViewObjects} were updated, else false if all updates were redundant and not applied.
+   */
+  setObjectsCulled(objectIds: string[], culled: boolean): boolean {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.setObjectsCulled] View already destroyed"
+      });
+      return;
+    }
+
+    let changed = false;
+    const objects = this.objects;
+
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const viewObject = objects[objectIds[i]];
+      if (!viewObject) {
+        continue;
+      }
+      if (viewObject.culled !== culled) {
+        viewObject.culled = culled;
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  /**
+   * Adds or removes the given ViewObjects from a named style bin.
+   */
+  setObjectsInStyleBin(styleBinId: string, objectIds: readonly string[], membership: boolean): SDKResult<boolean> {
+    if (this.destroyed) {
+      return {
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.setObjectsInStyleBin] View already destroyed"
+      };
+    }
+
+    let changed = false;
+    const objects = this.objects;
+
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const viewObject = objects[objectIds[i]];
+      if (!viewObject) {
+        continue;
+      }
+      const result = viewObject.setStyleBin(styleBinId, membership);
+      if (result.ok === false) {
+        return result;
+      }
+      if (result.value) {
+        changed = true;
+      }
+    }
+
+    return {ok: true, value: changed};
+  }
+
+  /**
+   * Colorizes the given {@link ViewObject | ViewObjects} in this View.
+   *
+   * - Updates {@link ViewObject.colorize} on the Objects with the given IDs.
+   * - Updates {@link View.colorizedObjects} and {@link View.numColorizedObjects}.
+   *
+   * Passing `null` or `undefined` for `colorize` **clears the colorize
+   * flag** on each affected ViewObject — the underlying SceneMesh
+   * material's colour shows through unchanged. This is the call to make
+   * when transitioning an object back to its native appearance (e.g.
+   * a 4D scheduler returning a finished task's objects to their IFC
+   * tint). Passing a `Vec3` such as `[1, 1, 1]` instead enables the
+   * colorize path with a white tint, **replacing** the material colour
+   * — not equivalent to clearing it.
+   *
+   * @param  objectIds One or more {@link ViewObject.id} values.
+   * @param  colorize  RGB colorize factors in `[0..1, 0..1, 0..1]`, or
+   *                   `null` / `undefined` to clear the colorize flag
+   *                   and reveal the underlying material.
+   * @returns True if any {@link ViewObject | ViewObjects} changed
+   *          colorize state, else false if all updates were redundant
+   *          and not applied.
+   */
+  setObjectsColorized(objectIds: string[], colorize: Vec3 | null | undefined) {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.setObjectsColorized] View already destroyed"
+      });
+      return;
+    }
+
+    let changed = false;
+    const objects = this.objects;
+
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const viewObject = objects[objectIds[i]];
+      if (!viewObject) {
+        continue;
+      }
+      viewObject.colorize = colorize;
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  /**
+   * Sets the opacity of the given {@link ViewObject | ViewObjects} in this View.
+   *
+   * - Updates {@link ViewObject.opacity} on the Objects with the given IDs.
+   * - Updates {@link View.opacityObjects} and {@link View.numOpacityObjects}.
+   *
+   * Passing `null` or `undefined` for `opacity` **clears the
+   * `OPACITY_UPDATED` flag** on each affected ViewObject — the
+   * underlying SceneMesh material's alpha shows through unchanged.
+   * Make this call when transitioning an object back to its native
+   * appearance (e.g. a 4D scheduler returning a finished task's
+   * objects to their IFC materials); passing a number such as `1`
+   * instead **enables the opacity override** with that exact value
+   * and replaces the material alpha — equivalent to "force fully
+   * opaque", which incorrectly routes naturally-transparent glass
+   * / curtain-wall meshes through the opaque render bin.
+   *
+   * @param  objectIds - One or more {@link ViewObject.id} values.
+   * @param  opacity   - Opacity factor in `[0..1]`, or `null` /
+   *                     `undefined` to clear the opacity override
+   *                     and let the material alpha through.
+   * @returns True if any {@link ViewObject | ViewObjects} changed
+   *          opacity state, else false if all updates were redundant
+   *          and not applied.
+   */
+  setObjectsOpacity(objectIds: string[], opacity: number | null | undefined): boolean {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.setObjecrsOpacity] View already destroyed"
+      });
+      return;
+    }
+
+    let changed = false;
+    const objects = this.objects;
+
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const viewObject = objects[objectIds[i]];
+      if (!viewObject) {
+        continue;
+      }
+      // The native setter handles `null` / `undefined` by clearing
+      // the `OPACITY_UPDATED` flag and resetting the stored value to
+      // 1.0 — no extra branch needed here, just forward the value.
+      // The previous "skip if equal" short-circuit could mask flag
+      // transitions (e.g. clearing the flag while `opacity` happens
+      // to already be 1.0), so the assignment is now unconditional.
+      viewObject.opacity = opacity as any;
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  /**
+   * Sets the pickability of the given {@link ViewObject | ViewObjects} in this View.
+   *
+   * - Updates {@link ViewObject.pickable} on the Objects with the given IDs.
+   * - Enables or disables the ability to pick the given Objects with {@link viewing!viewer.View.pick | View.pick}.
+   *
+   * @param {string[]} objectIds Array of {@link ViewObject.id} values.
+   * @param pickable Whether or not to set pickable.
+   * @returns True if any {@link ViewObject | ViewObjects} were updated, else false if all updates were redundant and not applied.
+   */
+  setObjectsPickable(objectIds: string[], pickable: boolean): boolean {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.setObjectsPickable] View already destroyed"
+      });
+      return;
+    }
+
+    let changed = false;
+    const objects = this.objects;
+
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const viewObject = objects[objectIds[i]];
+      if (!viewObject) {
+        continue;
+      }
+      if (viewObject.pickable !== pickable) {
+        viewObject.pickable = pickable;
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  /**
+   * Sets the clippability of the given {@link ViewObject | ViewObjects} in this View.
+   *
+   * - Updates {@link ViewObject.clippable} on the Objects with the given IDs.
+   * - Enables or disables the ability to clip the given Objects with {@link SectionPlane}.
+   *
+   * @param objectIds Array of {@link ViewObject.id} values.
+   * @param clippable Whether or not to set clippable.
+   * @returns True if any {@link ViewObject | ViewObjects} were updated, else false if all updates were redundant and not applied.
+   */
+  setObjectsClippable(objectIds: string[], clippable: boolean): boolean {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.setObjectsClippable] View already destroyed"
+      });
+      return;
+    }
+
+    let changed = false;
+    const objects = this.objects;
+
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const viewObject = objects[objectIds[i]];
+      if (!viewObject) {
+        continue;
+      }
+      if (viewObject.clippable !== clippable) {
+        viewObject.clippable = clippable;
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  /**
+   * Iterates with a callback over the given {@link ViewObject | ViewObjects} in this View.
+   *
+   * @param objectIds One or more {@link ViewObject.id} values.
+   * @param callback Callback to execute on each {@link viewing!viewer.ViewObject | ViewObject}.
+   * @returns True if any {@link ViewObject | ViewObjects} were updated, else false if all updates were redundant and not applied.
+   */
+  withObjects(objectIds: string[], callback: Function): boolean {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.withObjects] View already destroyed"
+      });
+      return;
+    }
+    let changed = false;
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const id = objectIds[i];
+      const viewObject = this.objects[id];
+      if (viewObject) {
+        changed = callback(viewObject) || changed;
+      }
+    }
+    return changed;
+  }
+
+  /**
+   * Creates a {@link ViewLayer} in this View.
+   *
+   * The ViewLayer is then registered in {@link View.layers}.
+   *
+   * Fires {@link viewing!viewer.ViewerEvents.onViewLayerCreated | ViewerEvents.onViewLayerCreated} event.
+   *
+   * Since the ViewLayer is created explicitly by this method, the ViewLayer will persist until {@link ViewLayer.destroy}
+   * is called, or the {@link viewing!viewer.View | View} itself is destroyed. If a ViewLayer with the given ID already exists, the method
+   * returns that existing ViewLayer. The method also ensures that the existing ViewLayer likewise persists.
+   *
+   * # Usage
+   *
+   * ```typescript
+   * const layerResult = view.createLayer({
+   *   id: "myLayer",
+   *   autoDestroy: true,
+   * });
+   *
+   * if (!layerResult.ok) {
+   *   console.error(layerResult.error);
+   * } else {
+   *   const viewLayer = layerResult.value;
+   *   console.log("ViewLayer created:", viewLayer.id);
+   * }
+   * ```
+   * @param viewLayerParams - Configuration parameters for the new {@link ViewLayer}.
+   * @returns A result containing the created {@link ViewLayer} on success, or an error message on failure.
+   */
+  createLayer(viewLayerParams: ViewLayerParams): SDKResult<ViewLayer> {
+    if (!viewLayerParams.id) {
+      return this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: "[View.createLayer] Missing layer ID."
+      });
+    }
+
+    let viewLayer = this.layers[viewLayerParams.id];
+    if (viewLayer) {
+      return {
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[View.createLayer] ViewLayer with ID "${viewLayerParams.id}" already exists.`
+      };
+    }
+    viewLayer = new ViewLayer({
+      id: viewLayerParams.id,
+      view: this,
+      viewer: this.viewer,
+      autoDestroy: viewLayerParams.autoDestroy || false
+    });
+    this.layers[viewLayerParams.id] = viewLayer;
+    this.viewer.events.onViewLayerCreated.dispatch(this, viewLayer);
+    this._attachSceneObjectsForLayer(viewLayer);
+    return {
+      ok: true,
+      value: viewLayer
+    };
+  }
+
+  /**
+   * Creates a {@link ViewTransform} in this View.
+   * @param viewTransformParams
+   */
+  createTransform(viewTransformParams: ViewTransformParams): SDKResult<ViewTransform> {
+    if (!viewTransformParams.id) {
+      return this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: "[View.createTransform] Missing transform ID."
+      });
+    }
+
+    let viewTransform = this.transforms[viewTransformParams.id];
+    if (viewTransform) {
+      return {
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[View.createTransform] ViewTransform with ID "${viewTransformParams.id}" already exists.`
+      };
+    }
+    viewTransform = new ViewTransform(this, viewTransformParams);
+    this.transforms[viewTransformParams.id] = viewTransform;
+    this.viewer.events.onViewTransformCreated.dispatch(this, viewTransform);
+    return {
+      ok: true,
+      value: viewTransform
+    };
+  }
+
+  private _destroyTransform(viewTransform: ViewTransform) {
+    delete this.transforms[viewTransform.id];
+    this.viewer.events.onViewTransformDestroyed.dispatch(this, viewTransform);
+  }
+
+  /**
+   * @private
+   * @param viewLayer
+   */
+  _destroyLayer(viewLayer: ViewLayer) {
+    const objectIds = Object.keys(viewLayer.objects);
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const viewObject = viewLayer.objects[objectIds[i]];
+      if (viewObject) {
+        this._destroyViewObject(viewObject, false);
+      }
+    }
+    delete this.layers[viewLayer.id];
+    this.viewer.events.onViewLayerDestroyed.dispatch(this, viewLayer);
+  }
+
+
+  // #registerSectionPlane(sectionPlane: SectionPlane) {
+  //   this.sectionPlanesList.push(sectionPlane);
+  //   this.sectionPlanes[sectionPlane.id] = sectionPlane;
+  //   this.#sectionPlanesHash = null;
+  //   this.rebuild();
+  //   this.viewer.events.onSectionPlaneCreated.dispatch(this, sectionPlane);
+  // }
+
+  /**
+   * @private
+   * @param sectionPlane
+   */
+  private _deregisterSectionPlane(sectionPlane: SectionPlane) {
+    for (let i = 0, len = this.sectionPlanesList.length; i < len; i++) {
+      if (this.sectionPlanesList[i].id === sectionPlane.id) {
+        this.sectionPlanesList.splice(i, 1);
+        this._sectionPlanesHash = null;
+        delete this.sectionPlanes[sectionPlane.id];
+        // this.rebuild();
+        this.viewer.events.onSectionPlaneDestroyed.dispatch(this, sectionPlane);
+        return;
+      }
+    }
+  }
+
+  getNumAllocatedSectionPlanes(): number {
+    return this.sectionPlanesList.length;
+  }
+
+  /**
+   * Sets the state of this View.
+   * @param viewParams
+   */
+  fromParams(viewParams: ViewParams): SDKResult<any> {
+    if (this.destroyed) {
+      return this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[View.fromParams] View "${this.id}" has been destroyed`
+      });
+    }
+    if (viewParams.camera) {
+      const result = this.camera.fromParams(viewParams.camera);
+      if (result.ok === false) {
+        return result;
+      }
+    }
+    if (viewParams.backgroundColor !== undefined) {
+      this.backgroundColor = viewParams.backgroundColor;
+    }
+    if (viewParams.backgroundColorFromAmbientLight !== undefined) {
+      this.backgroundColorFromAmbientLight = viewParams.backgroundColorFromAmbientLight;
+    }
+    if (viewParams.autoLayers !== undefined) {
+      this.autoLayers = viewParams.autoLayers;
+    }
+    if (viewParams.layers) {
+      for (const viewLayerParams of viewParams.layers) {
+        const existingViewLayer = this.layers[viewLayerParams.id];
+        if (!existingViewLayer) {
+          const result = this.createLayer(viewLayerParams);
+          if (result.ok === false) {
+            return result;
+          }
+        }
+      }
+    }
+    // if (viewParams.sectionPlanes) {
+    //     for (const sectionPlaneParams of viewParams.sectionPlanes) {
+    //         const existingSectionPlane = this.sectionPlanes[sectionPlaneParams.id];
+    //         if (existingSectionPlane) {
+    //             const result = existingSectionPlane.fromParams(sectionPlaneParams);
+    //             if (result.ok === false) {
+    //                 return result;
+    //             }
+    //         } else {
+    //             const result = this.createSectionPlane(sectionPlaneParams);
+    //             if (result.ok === false) {
+    //                 return result;
+    //             }
+    //         }
+    //     }
+    // }
+    if (viewParams.effects) {
+      const e = viewParams.effects;
+      if (e.sao) {
+        const result = this.effects.sao.fromParams(e.sao);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.shadows) {
+        const result = this.effects.shadows.fromParams(e.shadows);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.tonemap) {
+        const result = this.effects.tonemap.fromParams(e.tonemap);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.antiAliasing) {
+        const result = this.effects.antiAliasing.fromParams(e.antiAliasing);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.bloom) {
+        const result = this.effects.bloom.fromParams(e.bloom);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.atmosphere) {
+        const result = this.effects.atmosphere.fromParams(e.atmosphere);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.depthOfField) {
+        const result = this.effects.depthOfField.fromParams(e.depthOfField);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.colorGrading) {
+        const result = this.effects.colorGrading.fromParams(e.colorGrading);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.edges) {
+        const result = this.effects.edges.fromParams(e.edges);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.sky) {
+        const result = this.effects.sky.fromParams(e.sky);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.sectionPlaneCaps) {
+        const result = this.effects.sectionPlaneCaps.fromParams(e.sectionPlaneCaps);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.bodyHatch) {
+        const result = this.effects.bodyHatch.fromParams(e.bodyHatch);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (e.ibl) {
+        const result = this.effects.ibl.fromParams(e.ibl);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+    }
+    // Back-compat: also accept IBL under `lights.ibl` for construction-time
+    // configuration and any callers that wrote to that shape before IBL was
+    // surfaced under `effects`.
+    if (viewParams.lights) {
+      const l = viewParams.lights;
+      if (l.ibl) {
+        const result = this.lights.ibl.fromParams(l.ibl);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+      if (l.hemispheric) {
+        const result = this.lights.hemispheric.fromParams(l.hemispheric);
+        if (result.ok === false) {
+          return result;
+        }
+      }
+    }
+    if (viewParams.texturing) {
+      const result = this.texturing.fromParams(viewParams.texturing);
+      if (result.ok === false) {
+        return result;
+      }
+    }
+    if (viewParams.styleBins) {
+      for (const styleBinParams of viewParams.styleBins) {
+        const existing = this.styleBins.get(styleBinParams.id);
+        if (existing) {
+          const result = existing.fromParams(styleBinParams);
+          if (result.ok === false) {
+            return result;
+          }
+        } else {
+          const result = this.styleBins.create(styleBinParams);
+          if (result.ok === false) {
+            return result as SDKResult<void>;
+          }
+        }
+      }
+    }
+    if (viewParams.pointsMaterial) {
+      const result = this.pointsMaterial.fromParams(viewParams.pointsMaterial);
+      if (result.ok === false) {
+        return result;
+      }
+    }
+    // TODO: Update lights
+    return {
+      ok: true,
+      value: null
+    };
+  }
+
+  /**
+   * Gets this View as JSON.
+   */
+  toParams(): SDKResult<ViewParams> {
+    return {
+      ok: true,
+      value: {
+        id: this.id,
+        camera: (<{ value: CameraParams }>this.camera.toParams()).value,
+        autoLayers: this.autoLayers,
+        layers: Object.values(this.layers).map(viewLayer => (<{ value: ViewLayerParams }>viewLayer.toParams()).value),
+        // sectionPlanes: Object.values(this.sectionPlanes).map(sectionPlane => (<{ value: SectionPlaneParams }>sectionPlane.toParams()).value),
+        // lights: Object.values(this.lightSources).map(light => light.toParams()),
+        effects: {
+          sao:              (<{ value: SAOParams          }>this.effects.sao.toParams()).value,
+          shadows:          (<{ value: ShadowsParams      }>this.effects.shadows.toParams()).value,
+          tonemap:          (<{ value: TonemapParams      }>this.effects.tonemap.toParams()).value,
+          antiAliasing:     (<{ value: AntiAliasingParams }>this.effects.antiAliasing.toParams()).value,
+          bloom:            (<{ value: BloomParams        }>this.effects.bloom.toParams()).value,
+          atmosphere:       (<{ value: AtmosphereParams   }>this.effects.atmosphere.toParams()).value,
+          depthOfField:     (<{ value: DepthOfFieldParams }>this.effects.depthOfField.toParams()).value,
+          colorGrading:     (<{ value: ColorGradingParams }>this.effects.colorGrading.toParams()).value,
+          edges:            (<{ value: EdgesParams        }>this.effects.edges.toParams()).value,
+          sky:              (<{ value: SkyParams          }>this.effects.sky.toParams()).value,
+          sectionPlaneCaps: (<{ value: { enabled: boolean } }>this.effects.sectionPlaneCaps.toParams()).value,
+          bodyHatch:        (<{ value: { enabled: boolean } }>this.effects.bodyHatch.toParams()).value,
+          // IBL is anchored on `Lights` but surfaced through `effects`
+          // so reflective UIs (the Studio View Panel) group it with the
+          // renderer-effect components whose look it drives.
+          ibl:              (<{ value: IBLParams          }>this.effects.ibl.toParams()).value,
+        },
+        lights: {
+          ibl:              (<{ value: IBLParams                 }>this.lights.ibl.toParams()).value,
+          hemispheric:      (<{ value: HemisphereAmbientParams   }>this.lights.hemispheric.toParams()).value
+        },
+        texturing: (<{ value: TexturingParams }>this.texturing.toParams()).value,
+        styleBins: (<{ value: ViewStyleBinParams[] }>this.styleBins.toParams()).value,
+        pointsMaterial: (<{ value: PointsMaterialParams }>this.pointsMaterial.toParams()).value,
+        resolutionScale: (<{ value: ResolutionScaleParams }>this.resolutionScale.toParams()).value
+      }
+    };
+  }
+
+  /**
+   * Destroys this View.
+   *
+   * Causes {@link Viewer | Viewer} to fire a "viewDestroyed" event.
+   */
+  destroy() {
+    if (this.destroyed) {
+      this.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[View.destroy] View already destroyed"
+      });
+      return;
+    }
+    if (this._resizeObserver) {
+      this._resizeObserver.disconnect();
+      this._resizeObserver = null;
+    }
+    if (this._windowResizeListener) {
+      window.removeEventListener('resize', this._windowResizeListener);
+      this._windowResizeListener = null;
+    }
+    this._fireViewUpdatedEventTask.destroy();
+    this._destroyViewLayers();
+    this._destroyViewObjects();
+    this.viewer._destroyView(this);
+    this.destroyed = true;
+  }
+
+  private _destroyViewLayers() {
+    const layers = Object.values(this.layers);
+    for (let i = 0, len = layers.length; i < len; i++) {
+      const viewLayer = layers[i];
+      viewLayer.destroy();
+    }
+  }
+
+  private _destroyViewObjects() {
+    const objectIds = Object.keys(this.objects);
+    for (let i = 0, len = objectIds.length; i < len; i++) {
+      const viewObject = this.objects[objectIds[i]];
+      if (viewObject) {
+        this._destroyViewObject(viewObject);
+      }
+    }
+  }
+
+  private _destroyViewObject(viewObject: ViewObject, autoDestroyLayer: boolean = true) {
+    const viewLayer = viewObject.layer;
+    const styleBinIds = viewObject.styleBinIds;
+    for (let i = 0, len = styleBinIds.length; i < len; i++) {
+      viewObject.setStyleBin(styleBinIds[i], false);
+    }
+    this._deattachViewObject(viewObject);
+    viewLayer._deattachViewObject(viewObject);
+    viewObject.destroyed = true;
+    if (autoDestroyLayer && viewLayer.autoDestroy && viewLayer.numObjects === 0 && this.layers[viewLayer.id]) {
+      viewLayer.destroy();
+    }
+    this.viewer.events.onViewObjectDestroyed.dispatch(this, viewObject);
+    this.needsRender();
+  }
+}
+
+export {View};

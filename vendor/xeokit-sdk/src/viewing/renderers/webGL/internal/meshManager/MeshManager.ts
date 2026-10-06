@@ -1,0 +1,1572 @@
+import {RenderContext} from "../RenderContext";
+import {SDKErrorType, type SDKResult} from "../../../../../base/core";
+import {
+  SCENE_GEOMETRY_UPDATE_INDICES,
+  SCENE_GEOMETRY_UPDATE_NORMALS_COMPRESSED,
+  SCENE_GEOMETRY_UPDATE_UVS_COMPRESSED,
+  SCENE_GEOMETRY_UPDATE_POSITIONS_COMPRESSED,
+  SceneGeometry,
+  type SceneMaterial,
+  type SceneMesh,
+  type SceneModel,
+  type SceneObject,
+  type SceneVariantSet
+} from "../../../../../model/scene";
+import {RendererObject} from "./RendererObject";
+import {RendererMesh} from "./RendererMesh";
+import {MeshBatchImpl} from "./MeshBatchImpl";
+import {type MeshBatch} from "./MeshBatch";
+import type {Camera, View, ViewObject, ViewStyleBin} from "../../../../viewer";
+import type {SceneTransform} from "../../../../../model/scene/SceneTransform";
+import {GPUMemoryCheckResult, GPUMemoryManager, type GPUTile} from "../gpuMemoryManager";
+import {GaussianSplatsPrimitive} from "../../../../../base/constants";
+import {SplatBatch} from "../gpuMemoryManager/SplatBatch";
+import {RendererSplatMesh} from "./RendererSplatMesh";
+import type {TriangleGeometryStorageKind} from "../gpuMemoryManager/BatchGPUResources";
+import {getRendererMemoryPolicyForMesh, selectTriangleGeometryStorage} from "./TriangleGeometryStoragePolicy";
+import {createMat4Float64, transformPoint4, type Mat4} from "../../../../../base/math/matrix";
+import {createVec4Float64, subVec3, type Vec3} from "../../../../../base/math/vector";
+import {
+  createMeshManagerStepStats,
+  type MeshManagerStepStats
+} from "./MeshManagerStepStats";
+import type {LODVariantMembership} from "../../../../lod/LODVariantMembership";
+
+/**
+ * Per-batch splat capacity for the (single) {@link SplatBatch}. Sizes the splat
+ * data texture's GPU budget — ~1.5M splats × 64 B ≈ 96 MB. P1 uses one fixed
+ * batch; multiple / dynamically-sized splat batches are a later optimization.
+ */
+const MAX_SPLATS_PER_BATCH = 1_500_000;
+
+type MeshBatchKey = string;
+
+type BatchSearchPosition = {
+  capacityReleaseVersion: number;
+  firstCandidate: number;
+};
+
+type MeshTilePlacement = {
+  gpuTile: GPUTile;
+  tileIndex: number;
+  rtcMatrix: Mat4;
+};
+
+const identityVec4 = createVec4Float64([0, 0, 0, 1]);
+const tempPlacementCenter = createVec4Float64();
+const variantIdsByObjectCache: WeakMap<SceneVariantSet, Map<string, string[]>> = new WeakMap();
+
+function getLODVariantMembershipsForObject(sceneObject: SceneObject | null | undefined): readonly LODVariantMembership[] {
+  if (!sceneObject || typeof sceneObject.model?.getVariantSetsForObject !== "function") {
+    return [];
+  }
+  const variantSets = sceneObject.model.getVariantSetsForObject(sceneObject.id);
+  if (variantSets.length === 0) {
+    return [];
+  }
+  const memberships: LODVariantMembership[] = [];
+  for (let i = 0, len = variantSets.length; i < len; i++) {
+    const variantSet = variantSets[i];
+    const variantIds = getVariantIdsForObject(variantSet, sceneObject.id);
+    if (variantIds.length > 0) {
+      memberships.push({
+        selectionId: `${variantSet.model.id}:${variantSet.id}`,
+        variantIds
+      });
+    }
+  }
+  memberships.sort((a, b) => a.selectionId < b.selectionId ? -1 : a.selectionId > b.selectionId ? 1 : 0);
+  return memberships;
+}
+
+function getVariantIdsForObject(variantSet: SceneVariantSet, objectId: string): readonly string[] {
+  let variantIdsByObject = variantIdsByObjectCache.get(variantSet);
+  if (!variantIdsByObject) {
+    variantIdsByObject = new Map();
+    for (const variantId in variantSet.variants) {
+      const objectIds = variantSet.variants[variantId].objectIds;
+      for (let i = 0, len = objectIds.length; i < len; i++) {
+        const variantObjectId = objectIds[i];
+        let variantIds = variantIdsByObject.get(variantObjectId);
+        if (!variantIds) {
+          variantIds = [];
+          variantIdsByObject.set(variantObjectId, variantIds);
+        }
+        variantIds.push(variantId);
+      }
+    }
+    for (const variantIds of variantIdsByObject.values()) {
+      variantIds.sort();
+    }
+    variantIdsByObjectCache.set(variantSet, variantIdsByObject);
+  }
+  return variantIdsByObject.get(objectId) ?? [];
+}
+
+/**
+ * Bridges scene/view state changes into GPU-ready render state for the renderer.
+ *
+ * @remarks
+ * - `MeshManager` is owned by a {@link ViewManager}, which manages all {@link viewing!viewer.View | View}s for a single {@link viewing!viewer.Viewer | Viewer} (not one ViewManager per View).
+ * - It acts as the central bridge between the scene graph (models, objects, meshes) and the renderer's GPU memory and batching subsystems.
+ * - Owns the renderer-side representation of:
+ *   - {@link model!scene.SceneObject | SceneObject}s (as {@link RendererObject}s, which can span multiple meshes)
+ *   - {@link model!scene.SceneMesh | SceneMesh} instances (as {@link RendererMesh}s)
+ *   - {@link MeshBatch} groupings (as {@link MeshBatchImpl}s), used to batch meshes by primitive type and compatibility constraints, backed by {@link GPUMemoryManager} allocations.
+ * - Coordinates with {@link GPUMemoryManager} to allocate, update, and release GPU memory for mesh, geometry, and attribute data.
+ * - Maintains mesh batches for efficient rendering, minimizing draw calls and optimizing memory usage.
+ * - Handles registration and lifecycle of models, objects, and meshes in response to scene/view events.
+ * - Forwards per-frame and per-event updates (matrix, color, opacity, visibility, etc.) to the relevant renderer objects/meshes and/or {@link GPUMemoryManager}.
+ * - Used internally by the renderer; not accessed directly by application code.
+ *
+ * ## Architectural Role
+ * - The {@link WebGLRenderer} owns a single {@link ViewManager} for each renderer instance.
+ * - The {@link ViewManager} manages all {@link viewing!viewer.View | View}s for the {@link viewing!viewer.Viewer | Viewer}.
+ * - The `MeshManager` is owned by the {@link ViewManager} and manages all renderer objects and meshes for all views.
+ * - `MeshManager` ensures that changes in the scene or any view are efficiently reflected in GPU state, supporting high-performance, multi-view rendering.
+ *
+ * @internal
+ */
+export class MeshManager {
+
+  /**
+   * Renderer objects keyed by {@link SceneObject.id}.
+   *
+   * Note: a {@link model!scene.SceneObject | SceneObject} can belong to many models in some scene graphs; this manager
+   * treats object IDs as globally unique and maps them to a single {@link RendererObject}.
+   */
+  private _rendererObjects: Record<string, RendererObject> = {};
+  private readonly _lodVisibilityVersions: {[viewId: string]: number} = {};
+  private readonly _nonBatchLODObjectIds: Set<string> = new Set();
+
+  /**
+   * Renderer meshes keyed by {@link SceneMesh.uniqueId}.
+   */
+  private _rendererMeshes: Record<string, RendererMesh> = {};
+
+  /** Renderer-side handles for gaussian-splat meshes (kept out of {@link _rendererMeshes}). */
+  private _rendererSplatMeshes: Record<string, RendererSplatMesh> = {};
+  /** Splat meshes keyed by their pick id (written into the pick buffer). */
+  private _splatPickMeshes: Map<number, RendererSplatMesh> = new Map();
+  private _nextSplatPickId = 0;
+
+  /** Lazily-created shared GPU storage for all gaussian splats. */
+  private _splatBatch: SplatBatch | null = null;
+
+  /** Shared render context used for device resources and viewer access. */
+  private _renderContext: RenderContext;
+
+  /** Allocates/updates GPU memory for batches, meshes, and per-frame state. */
+  private _gpuMemoryManager: GPUMemoryManager;
+
+  /**
+   * Mesh batches.
+   *
+   * Batches are grouped primarily by primitive type (and additional compatibility checks).
+   */
+  private _batches: MeshBatchImpl[] = [];
+
+  /** Compatible mesh batches keyed by primitive/material-layout/bin axes. */
+  private _batchesByKey: Map<MeshBatchKey, MeshBatchImpl[]> = new Map();
+
+  /** Rejected prefixes per geometry/group, without retaining unloaded geometries. */
+  private _batchSearchPositions = new WeakMap<SceneGeometry, Map<MeshBatchKey, BatchSearchPosition>>();
+
+  /** Whether {@link _batches} needs to be re-sorted by primitive. */
+  private _batchesDirty = true;
+
+  /**
+   * Opt-in step-level timing for {@link _addMesh}. Off by default so
+   * the hot path takes no `performance.now()` hit in normal use.
+   * Toggle via {@link enableStepStats}.
+   *
+   * @internal
+   */
+  private _stepStatsEnabled = false;
+
+  /**
+   * Per-step counters/timings populated when {@link _stepStatsEnabled}
+   * is on. Read via {@link getStepStats}, cleared via
+   * {@link resetStepStats}. Used by the load-pipeline benchmark to
+   * attribute time inside `SceneModel.createMesh`'s synchronous
+   * renderer cascade.
+   *
+   * @internal
+   */
+  private _stepStats: MeshManagerStepStats = createMeshManagerStepStats();
+
+  /**
+   * Creates a {@link MeshManager}.
+   *
+   * @param renderContext - Shared renderer context (provides access to viewer + WebGL resources).
+   * @param gpuMemoryManager - GPU memory allocator/uploader used by batches and meshes.
+   */
+  constructor(renderContext: RenderContext, gpuMemoryManager: GPUMemoryManager) {
+    this._renderContext = renderContext;
+    this._gpuMemoryManager = gpuMemoryManager;
+  }
+
+  /**
+   * Initializes the manager by registering any existing {@link model!scene.SceneModel | SceneModel}s and {@link model!scene.SceneObject | SceneObject}s
+   * already present in the viewer's scene.
+   *
+   * @returns {@link base!core.SDKResult | SDKResult} that is `ok:true` when initialization succeeds, or `ok:false` if
+   * any object registration fails.
+   *
+   * @remarks
+   * This method assumes that the scene is the source of truth, but still performs defensive checks
+   * (eg. rejecting duplicate IDs) because scene event streams may not be perfectly reliable.
+   */
+  public init(): SDKResult<void> {
+    const {
+      models: sceneModels,
+      objects: sceneObjects
+    } = this._renderContext.viewer.scene;
+
+    for (const sceneModelId in sceneModels) {
+      const sceneModel = sceneModels[sceneModelId];
+      if (sceneModel.headless) {
+        continue;
+      }
+      const modelResult = this.sceneModelCreated(sceneModel);
+      if (modelResult.ok === false) {
+        return modelResult;
+      }
+      const sceneMeshes = Object.values(sceneModel.meshes)
+        .filter((sceneMesh) => !sceneMesh.model.activeBatch?.includesMesh(sceneMesh));
+      if (sceneMeshes.length > 0) {
+        const meshResult = this.sceneMeshesCreated(sceneMeshes);
+        if (meshResult.ok === false) {
+          return meshResult;
+        }
+      }
+    }
+
+    for (const sceneObjectId in sceneObjects) {
+      const sceneObject = sceneObjects[sceneObjectId];
+      if (sceneObject.model.headless) {
+        continue;
+      }
+      if (sceneObject.model.activeBatch?.includesObject(sceneObject)) {
+        continue;
+      }
+      const result = this.sceneObjectCreated(sceneObject);
+      if (result.ok === false) {
+        return result;
+      }
+    }
+
+    return {ok: true, value: undefined};
+  }
+
+  /**
+   * Synchronizes renderer-side LOD suppression into existing per-view mesh
+   * visibility. This is version-gated by {@link LODVisibility}, so it only
+   * walks renderer objects when an LOD group actually switches state.
+   */
+  public syncLODVisibility(view: View): void {
+    const lodVisibility = this._renderContext.viewer.lodVisibility;
+    const version = lodVisibility.getViewVersion(view.id);
+    const previousVersion = this._lodVisibilityVersions[view.id] ?? 0;
+    if (previousVersion === version) {
+      return;
+    }
+    const deltaResult = lodVisibility.getSuppressionDeltasSince(view.id, previousVersion);
+    if (deltaResult) {
+      for (let i = 0, len = deltaResult.deltas.length; i < len; i++) {
+        const delta = deltaResult.deltas[i];
+        const objectIds = delta.objectIds;
+        for (let j = 0, objectLen = objectIds.length; j < objectLen; j++) {
+          this._rendererObjects[objectIds[j]]?.setLODSuppressed(view.viewIndex, delta.suppressed);
+        }
+      }
+      this._lodVisibilityVersions[view.id] = version;
+      this._syncNonBatchLODObjects(view);
+      return;
+    }
+    this._lodVisibilityVersions[view.id] = version;
+    this._syncNonBatchLODObjects(view);
+  }
+
+  /**
+   * Registers a newly created {@link model!scene.SceneModel | SceneModel}.
+   *
+   * @param sceneModel - The model to register.
+   * @returns {@link base!core.SDKResult | SDKResult} indicating success, or `ok:false` if a model with the same id
+   * was already registered.
+   */
+  public sceneModelCreated(sceneModel: SceneModel): SDKResult<any> {
+    return {ok: true, value: undefined};
+  }
+
+  /**
+   * Unregisters a {@link model!scene.SceneModel | SceneModel}.
+   *
+   * @param sceneModel - The model to unregister.
+   * @returns {@link base!core.SDKResult | SDKResult} indicating success, or `ok:false` if the model was not registered.
+   */
+  public sceneModelDestroyed(sceneModel: SceneModel): SDKResult<any> {
+    for (const sceneObject of Object.values(sceneModel.objects)) {
+      if (this._rendererObjects[sceneObject.id]) {
+        delete this._rendererObjects[sceneObject.id];
+      }
+    }
+    for (const sceneMesh of Object.values(sceneModel.meshes)) {
+      this._removeMesh(sceneMesh);
+    }
+    this._batchesDirty = true;
+    return {ok: true, value: undefined};
+  }
+
+  public sceneVariantSetCreated(variantSet: SceneVariantSet): SDKResult<any> {
+    for (const variantId in variantSet.variants) {
+      const objectIds = variantSet.variants[variantId].objectIds;
+      for (let i = 0, len = objectIds.length; i < len; i++) {
+        const sceneObject = variantSet.model.objects[objectIds[i]];
+        if (sceneObject) {
+          this._updateObjectLODFilterMode(sceneObject);
+        }
+      }
+    }
+    return {ok: true, value: undefined};
+  }
+
+  public sceneVariantSetDestroyed(variantSet: SceneVariantSet): SDKResult<any> {
+    for (const variantId in variantSet.variants) {
+      const objectIds = variantSet.variants[variantId].objectIds;
+      for (let i = 0, len = objectIds.length; i < len; i++) {
+        const sceneObject = variantSet.model.objects[objectIds[i]];
+        if (sceneObject) {
+          this._updateObjectLODFilterMode(sceneObject);
+        } else {
+          this._nonBatchLODObjectIds.delete(objectIds[i]);
+        }
+      }
+    }
+    return {ok: true, value: undefined};
+  }
+
+  /**
+   * Registers a newly created {@link model!scene.SceneGeometry | SceneGeometry}.
+   *
+   * @param sceneGeometry - The geometry to register.
+   * @returns {@link base!core.SDKResult | SDKResult} indicating success, or `ok:false` if registration fails.
+   */
+  public sceneGeometryCreated(sceneGeometry: SceneGeometry): SDKResult<any> {
+    return {ok: true, value: undefined};
+  }
+
+  /**
+   * Unregisters a {@link model!scene.SceneGeometry | SceneGeometry}.
+   * @param sceneGeometry - The geometry to unregister.
+   * @returns {@link base!core.SDKResult | SDKResult} indicating success, or `ok:false` if unregistration fails.
+   */
+  sceneGeometryDestroyed(sceneGeometry: SceneGeometry): SDKResult<any> {
+    this._batchSearchPositions.delete(sceneGeometry);
+    return {ok: true, value: undefined};
+  }
+
+  sceneGeometryUpdated(sceneGeometry: SceneGeometry): SDKResult<any> {
+    this._batchSearchPositions.delete(sceneGeometry);
+    if (sceneGeometry.model.headless) {
+      return {ok: true, value: undefined};
+    }
+    const meshes = Object.values(sceneGeometry.model.meshes)
+      .filter((mesh) => mesh.geometry === sceneGeometry);
+
+    const fastUpdateFlags = sceneGeometry.lastUpdateFlags
+      & (SCENE_GEOMETRY_UPDATE_POSITIONS_COMPRESSED | SCENE_GEOMETRY_UPDATE_INDICES | SCENE_GEOMETRY_UPDATE_NORMALS_COMPRESSED | SCENE_GEOMETRY_UPDATE_UVS_COMPRESSED);
+    if (fastUpdateFlags !== 0 && this._tryFastSceneGeometryUpdate(meshes, fastUpdateFlags)) {
+      return {ok: true, value: undefined};
+    }
+
+    for (const sceneMesh of meshes) {
+      if (sceneMesh.geometry.primitive === GaussianSplatsPrimitive) {
+        this._removeSplatMesh(sceneMesh);
+      } else {
+        const rendererObject = sceneMesh.object ? this._rendererObjects[sceneMesh.object.id] : undefined;
+        const rendererMesh = this._rendererMeshes[sceneMesh.uniqueId];
+        if (rendererObject && rendererMesh) {
+          this._detachRendererMeshFromObject(rendererObject, rendererMesh);
+        }
+        this._removeMesh(sceneMesh);
+      }
+    }
+
+    for (const sceneMesh of meshes) {
+      if (sceneMesh.destroyed) {
+        continue;
+      }
+      const result = sceneMesh.geometry.primitive === GaussianSplatsPrimitive
+        ? this._addSplatMesh(sceneMesh)
+        : this._addMesh(sceneMesh);
+      if (result.ok === false) {
+        return result;
+      }
+      if (sceneMesh.geometry.primitive !== GaussianSplatsPrimitive && sceneMesh.object) {
+        const attachResult = this.sceneObjectMeshAdded(sceneMesh.object, sceneMesh);
+        if (attachResult.ok === false) {
+          return attachResult;
+        }
+      }
+    }
+
+    this._batchesDirty = true;
+    return {ok: true, value: undefined};
+  }
+
+  private _tryFastSceneGeometryUpdate(meshes: SceneMesh[], updateFlags: number): boolean {
+    for (const sceneMesh of meshes) {
+      if (sceneMesh.destroyed || sceneMesh.geometry.primitive === GaussianSplatsPrimitive) {
+        return false;
+      }
+      if (!this._rendererMeshes[sceneMesh.uniqueId]) {
+        return false;
+      }
+    }
+    for (const sceneMesh of meshes) {
+      const rendererMesh = this._rendererMeshes[sceneMesh.uniqueId];
+      const result = rendererMesh.updateGeometry(updateFlags);
+      if (result.ok === false || result.value !== true) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Registers a newly created {@link model!scene.SceneMesh | SceneMesh}.
+   * @param sceneMesh - The mesh to register.
+   * @returns {@link base!core.SDKResult | SDKResult} indicating success, or `ok:false` if registration fails.
+   */
+  sceneMeshCreated(sceneMesh: SceneMesh): SDKResult<any> {
+    if (sceneMesh.model.headless || sceneMesh.replacesGeometry) {
+      return {ok: true, value: undefined};
+    }
+    if (sceneMesh.geometry.primitive === GaussianSplatsPrimitive) {
+      return this._addSplatMesh(sceneMesh);
+    }
+    return this._addMesh(sceneMesh);
+  }
+
+  sceneMeshesCreated(sceneMeshes: SceneMesh[]): SDKResult<any> {
+    sceneMeshes = sceneMeshes.filter((sceneMesh) => !sceneMesh.model.headless && !sceneMesh.replacesGeometry);
+    if (sceneMeshes.length === 0) {
+      return {ok: true, value: undefined};
+    }
+    const stats = this._stepStatsEnabled ? this._stepStats : null;
+    if (stats) {
+      stats.bulkMeshFlushes++;
+      stats.bulkMeshFlushMeshes += sceneMeshes.length;
+    }
+    const bulkBatches = new Set<MeshBatchImpl>();
+    let firstError: SDKResult<any> | null = null;
+    try {
+      for (const sceneMesh of sceneMeshes) {
+        const result = sceneMesh.geometry.primitive === GaussianSplatsPrimitive
+          ? this._addSplatMesh(sceneMesh)
+          : this._addMesh(sceneMesh, bulkBatches);
+        if (result.ok === false && firstError === null) {
+          firstError = result;
+        }
+      }
+    } finally {
+      for (const meshBatch of bulkBatches) {
+        meshBatch.endBulkMeshAdd(stats);
+      }
+    }
+    return firstError ?? {ok: true, value: undefined};
+  }
+
+  /**
+   * Unregisters a {@link model!scene.SceneMesh | SceneMesh}.
+   * @param sceneMesh - The mesh to unregister.
+   * @returns {@link base!core.SDKResult | SDKResult} indicating success, or `ok:false` if unregistration fails.
+   */
+  sceneMeshDestroyed(sceneMesh: SceneMesh): SDKResult<any> {
+    if (sceneMesh.model.headless) {
+      return {ok: true, value: undefined};
+    }
+    if (sceneMesh.geometry.primitive === GaussianSplatsPrimitive) {
+      this._removeSplatMesh(sceneMesh);
+      return {ok: true, value: undefined};
+    }
+    this._removeMesh(sceneMesh);
+    return {ok: true, value: undefined};
+  }
+
+  /** The shared gaussian-splat batch, or null if no splats have been added. */
+  public getSplatBatch(): SplatBatch | null {
+    return this._splatBatch;
+  }
+
+  /**
+   * Recreates GPU resources after a WebGL context restore. The mesh batches are
+   * owned by the GPUMemoryManager (restored there); only the splat batch is
+   * owned here, so re-upload its texture from the CPU mirror.
+   */
+  public webglContextRestored(): SDKResult<void> {
+    if (this._splatBatch) {
+      this._splatBatch.setWebGLContext(this._renderContext.gl);
+      return this._splatBatch.webglContextRestored();
+    }
+    return {ok: true, value: undefined};
+  }
+
+  /**
+   * Registers a newly created {@link model!scene.SceneObject | SceneObject}.
+   *
+   * Creates a {@link RendererObject}, expects that all its meshes are pre-registered
+   * and have corresponding {@link RendererMesh} instances.
+   *
+   * @param sceneObject - The object to register.
+   * @returns {@link base!core.SDKResult | SDKResult} indicating success, or `ok:false` if:
+   * - an object with the same id already exists,
+   * - or any mesh/batch allocation fails.
+   */
+  public sceneObjectCreated(sceneObject: SceneObject): SDKResult<any> {
+    if (sceneObject.model.headless) {
+      return {ok: true, value: undefined};
+    }
+    const objectId = sceneObject.id;
+
+    if (this._rendererObjects[objectId]) {
+      return {ok: true, value: undefined};
+    }
+
+    const rendererMeshes: RendererMesh[] = [];
+    for (const sceneMesh of sceneObject.meshes) {
+      // Splat meshes live in the SplatBatch, not as RendererMeshes — skip them
+      // here; the RendererObject only tracks regular (mesh-batch) meshes.
+      if (sceneMesh.geometry.primitive === GaussianSplatsPrimitive || sceneMesh.replacesGeometry) {
+        continue;
+      }
+      const rendererMesh = this._rendererMeshes[sceneMesh.uniqueId];
+
+      if (!rendererMesh) {
+        return {
+          ok: false,
+          type: SDKErrorType.InvalidInput,
+          error: `[MeshManager.sceneObjectCreated] SceneMesh not attached with this globalId: ${sceneMesh.uniqueId}`
+        };
+      }
+
+      rendererMeshes.push(rendererMesh);
+    }
+
+    this._rendererObjects[objectId] = new RendererObject({
+      id: objectId,
+      rendererMeshes
+    });
+    this._updateObjectLODFilterMode(sceneObject, rendererMeshes);
+
+    this._synchronizeCreatedRendererObject(sceneObject, rendererMeshes);
+
+    this._batchesDirty = true;
+
+    return {ok: true, value: undefined};
+  }
+
+  private _synchronizeCreatedRendererObject(sceneObject: SceneObject, rendererMeshes: RendererMesh[]): void {
+    const viewer = this._renderContext.viewer;
+    const numViews = Math.min(viewer.numViews, this._renderContext.memoryConfigs.maxViews);
+    for (let viewIndex = 0; viewIndex < numViews; viewIndex++) {
+      const viewObject = viewer.viewList[viewIndex]?.objects[sceneObject.id];
+      const hasDetachedRendererMesh = this._rendererMeshesNeedObjectStateSync(rendererMeshes, viewIndex);
+      if (viewObject) {
+        if (!hasDetachedRendererMesh && !this._viewObjectStateNeedsInitialSync(viewObject)) {
+          continue;
+        }
+        for (let i = 0, n = rendererMeshes.length; i < n; i++) {
+          this._synchronizeRendererMeshWithViewObject(rendererMeshes[i], viewObject);
+        }
+        continue;
+      }
+      if (!hasDetachedRendererMesh && sceneObject.clippable !== false) {
+        continue;
+      }
+      for (let i = 0, n = rendererMeshes.length; i < n; i++) {
+        this._synchronizeRendererMeshWithDefaultObjectState(rendererMeshes[i], viewIndex, sceneObject);
+      }
+    }
+  }
+
+  private _syncNonBatchLODObjects(view: View): void {
+    if (this._nonBatchLODObjectIds.size === 0) {
+      return;
+    }
+    const lodVisibility = this._renderContext.viewer.lodVisibility;
+    for (const objectId of this._nonBatchLODObjectIds) {
+      this._rendererObjects[objectId]?.setLODSuppressed(
+        view.viewIndex,
+        lodVisibility.isSuppressed(view.id, objectId)
+      );
+    }
+  }
+
+  private _updateObjectLODFilterMode(sceneObject: SceneObject, rendererMeshes?: RendererMesh[]): void {
+    const objectId = sceneObject.id;
+    const lodVariantMemberships = getLODVariantMembershipsForObject(sceneObject);
+    if (lodVariantMemberships.length === 0) {
+      this._nonBatchLODObjectIds.delete(objectId);
+      return;
+    }
+    const meshes = rendererMeshes ?? sceneObject.meshes
+      .map((sceneMesh) => this._rendererMeshes[sceneMesh.uniqueId])
+      .filter((rendererMesh): rendererMesh is RendererMesh => !!rendererMesh);
+    for (let i = 0, len = meshes.length; i < len; i++) {
+      if (!meshes[i].usesBatchLOD()) {
+        this._nonBatchLODObjectIds.add(objectId);
+        return;
+      }
+    }
+    this._nonBatchLODObjectIds.delete(objectId);
+  }
+
+  private _rendererMeshesNeedObjectStateSync(rendererMeshes: RendererMesh[], viewIndex: number): boolean {
+    for (let i = 0, len = rendererMeshes.length; i < len; i++) {
+      if (!rendererMeshes[i].isObjectVisible(viewIndex)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private _viewObjectStateNeedsInitialSync(viewObject: ViewObject): boolean {
+    return !viewObject.visible
+      || viewObject.culled
+      || !viewObject.pickable
+      || !viewObject.clippable
+      || viewObject.colorize !== null
+      || viewObject.opacityUpdated
+      || viewObject.styleBinIds.length > 0;
+  }
+
+  /**
+   * Creates (or reuses) a compatible {@link MeshBatchImpl} and registers the given {@link model!scene.SceneMesh | SceneMesh}
+   * as a {@link RendererMesh}.
+   *
+   * @param sceneMesh - The mesh to register.
+   */
+  private _addMesh(sceneMesh: SceneMesh, bulkBatches?: Set<MeshBatchImpl>, representationFallback = false): SDKResult<RendererMesh> {
+    if (sceneMesh.replacesGeometry && !representationFallback) return {ok: true, value: undefined};
+    const meshGlobalId = sceneMesh.uniqueId;
+
+    const existingRendererMesh = this._rendererMeshes[meshGlobalId];
+    if (existingRendererMesh) {
+      return {ok: true, value: existingRendererMesh};
+    }
+
+    const stats = this._stepStatsEnabled ? this._stepStats : null;
+
+    const t0 = stats ? performance.now() : 0;
+    const meshBatchResult = this._getMeshBatch(sceneMesh);
+    if (stats) {
+      stats.getMeshBatchMs += performance.now() - t0;
+      stats.getMeshBatchCalls++;
+    }
+    if (meshBatchResult.ok === false) {
+      return meshBatchResult;
+    }
+
+    const meshBatch = meshBatchResult.value;
+    if (bulkBatches && !bulkBatches.has(meshBatch)) {
+      meshBatch.beginBulkMeshAdd(stats);
+      bulkBatches.add(meshBatch);
+    }
+    const tPlacement = stats ? performance.now() : 0;
+    const placement = this._createMeshTilePlacement(sceneMesh);
+    if (stats) {
+      stats.meshPlacementMs += performance.now() - tPlacement;
+      stats.meshPlacementCalls++;
+    }
+
+    const t1 = stats ? performance.now() : 0;
+    const meshResult = meshBatch.addMesh(sceneMesh, placement, stats);
+    if (stats) {
+      stats.batchAddMeshMs += performance.now() - t1;
+      stats.batchAddMeshCalls++;
+    }
+    if (meshResult.ok === false) {
+      this._gpuMemoryManager.putTile(placement.gpuTile);
+      return meshResult;
+    }
+
+    const meshHandle = meshResult.value;
+
+    const t2 = stats ? performance.now() : 0;
+    const rendererMesh = new RendererMesh({
+      renderContext: this._renderContext,
+      sceneMesh,
+      meshBatch,
+      gpuMemoryManager: this._gpuMemoryManager,
+      meshHandle,
+      gpuTile: placement.gpuTile
+    });
+    this._rendererMeshes[meshGlobalId] = rendererMesh;
+    if (stats) {
+      stats.rendererMeshCtorMs += performance.now() - t2;
+      stats.rendererMeshCtorCalls++;
+    }
+
+    return {ok: true, value: rendererMesh};
+  }
+
+  private _createMeshTilePlacement(sceneMesh: SceneMesh): MeshTilePlacement {
+    const center = transformPoint4(sceneMesh.worldMatrix, identityVec4, tempPlacementCenter) as unknown as Vec3;
+    const gpuTile = this._gpuMemoryManager.getTile(center);
+    const rtcMatrix = createMat4Float64(sceneMesh.worldMatrix) as Mat4;
+    (rtcMatrix as any).set(subVec3(center, gpuTile.center), 12);
+    return {
+      gpuTile,
+      tileIndex: gpuTile.tileIndex,
+      rtcMatrix
+    };
+  }
+
+  /**
+   * Registers a gaussian-splat {@link SceneMesh} into the dedicated
+   * {@link SplatBatch} (lazily created). Splats stream in/out as freeable
+   * texture portions; they never touch the mesh {@link GPUMemoryBatch} path.
+   */
+  private _addSplatMesh(sceneMesh: SceneMesh): SDKResult<RendererSplatMesh> {
+    const meshGlobalId = sceneMesh.uniqueId;
+    const existingRendererSplatMesh = this._rendererSplatMeshes[meshGlobalId];
+    if (existingRendererSplatMesh) {
+      return {ok: true, value: existingRendererSplatMesh};
+    }
+    const geom = sceneMesh.geometry;
+    if (!geom.scales || !geom.rotations || !geom.aabb) {
+      return {
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[MeshManager._addSplatMesh] GaussianSplats geometry '${geom.id}' is missing scales/rotations/aabb.`
+      };
+    }
+    const batchResult = this._ensureSplatBatch();
+    if (batchResult.ok === false) {
+      return batchResult;
+    }
+    const splatBatch = batchResult.value;
+    const pickId = this._nextSplatPickId++;
+    const frameStorageResult = splatBatch.addGeometryFrames(geom);
+    if (frameStorageResult.ok === false) {
+      return frameStorageResult;
+    }
+    const addResult = splatBatch.addSplats({
+      positionsCompressed: geom.positionsCompressed,
+      aabb: geom.aabb,
+      scales: geom.scales,
+      rotations: geom.rotations,
+      colorsCompressed: geom.colorsCompressed,
+    }, sceneMesh.worldMatrix, pickId);  // bake the mesh world matrix (incl. model coordinate system) + pick id
+    if (addResult.ok === false) {
+      splatBatch.releaseGeometryFrames(geom);
+      return addResult;
+    }
+    const frameStateResult = splatBatch.setFrameState(pickId, frameStorageResult.value, sceneMesh.frameTime, sceneMesh.worldMatrix);
+    if (frameStateResult.ok === false) {
+      splatBatch.removeSplats(addResult.value);
+      splatBatch.releaseGeometryFrames(geom);
+      return frameStateResult;
+    }
+    const rendererSplatMesh = new RendererSplatMesh(sceneMesh, splatBatch, addResult.value, frameStorageResult.value, pickId);
+    this._rendererSplatMeshes[meshGlobalId] = rendererSplatMesh;
+    this._splatPickMeshes.set(pickId, rendererSplatMesh);
+    return {ok: true, value: rendererSplatMesh};
+  }
+
+  /** Lazily creates + allocates the shared {@link SplatBatch}. */
+  private _ensureSplatBatch(): SDKResult<SplatBatch> {
+    if (this._splatBatch) {
+      return {ok: true, value: this._splatBatch};
+    }
+    const batch = new SplatBatch(this._renderContext.gl, MAX_SPLATS_PER_BATCH);
+    const allocResult = batch.allocate();
+    if (allocResult.ok === false) {
+      return allocResult;
+    }
+    this._splatBatch = batch;
+    return {ok: true, value: batch};
+  }
+
+  /** Streams a gaussian-splat mesh out of the {@link SplatBatch}. */
+  private _removeSplatMesh(sceneMesh: SceneMesh): void {
+    const rendererSplatMesh = this._rendererSplatMeshes[sceneMesh.uniqueId];
+    if (rendererSplatMesh) {
+      this._splatPickMeshes.delete(rendererSplatMesh.pickId);
+      rendererSplatMesh.destroy();
+      delete this._rendererSplatMeshes[sceneMesh.uniqueId];
+    }
+  }
+
+  /** Resolves a splat-pick `pickId` (read from the pick buffer) to its SceneMesh. */
+  public getSplatMeshAtPickIndex(pickId: number): SceneMesh | null {
+    return this._splatPickMeshes.get(pickId)?.sceneMesh ?? null;
+  }
+
+  /**
+   * Returns an existing compatible {@link MeshBatchImpl} for the mesh or creates a new one.
+   *
+   * Compatibility is determined by:
+   * - matching geometry primitive type,
+   * - matching `hasNormals` flag (so geometry-with-normals lands in the
+   *   smooth-shaded batch and geometry-without lands in the flat-shaded one),
+   * - matching `hasUVs` flag (so the UV-bearing technique variant only sees
+   *   geometries that actually populate the UV data texture),
+   * - matching `triplanar` flag (so the triplanar shader variant only sees
+   *   meshes whose textures it must derive from world-space coordinates),
+   * - matching `mipmap` flag (so an opted-in {@link SceneTexture}'s meshes
+   *   land in a mipmap-bearing atlas while the standard non-mipped path
+   *   stays cheap), and
+   * - {@link MeshBatchImpl.canAddMesh} constraints.
+   *
+   * @param sceneMesh - The mesh requiring a batch.
+   * @returns {@link base!core.SDKResult | SDKResult} containing a compatible batch.
+   */
+  private _getMeshBatch(sceneMesh: SceneMesh): SDKResult<MeshBatchImpl> {
+    const primitive = sceneMesh.geometry.primitive;
+    const hasNormals = !!sceneMesh.geometry.normalsCompressed;
+    const hasUVs     = !!sceneMesh.geometry.uvsCompressed;
+    const hasFrames  = !!sceneMesh.geometry.framesCompressed?.length;
+    // Triplanar engages when the material binds at least one texture
+    // and the geometry has no UVs to drive the standard sampling path.
+    // Mutually exclusive with `hasUVs` by construction — UV-bearing
+    // geometry routes through the existing atlas path.
+    const triplanar = !hasUVs && _materialHasAnyTexture(sceneMesh);
+    // Mipmap engages when any of the material's bound textures opted
+    // in via `SceneTextureParams.mipmap`. Untextured batches keep
+    // `mipmap: false` — there's nothing to filter trilinearly. A
+    // material with mixed-mode textures (some mipped, some not) lands
+    // in a mipped batch, so the non-mipped textures end up in a
+    // mipped atlas too — predictable, documented on the param.
+    const mipmap = (hasUVs || triplanar) && _materialHasMippedTexture(sceneMesh);
+    const geometryStorage = hasFrames ? "dtx" : selectTriangleGeometryStorage(sceneMesh, this._renderContext.updateModePolicies);
+    const sceneBatchId = (sceneMesh as {batchId?: string}).batchId;
+    const allocationKind = sceneBatchId
+      ? "sealedBatch"
+      : sceneMesh.model.sealed
+        ? "sealedModel"
+        : "dynamic";
+    // Bin is part of the batch identity so each batch is bin-homogeneous —
+    // the renderer's overlay pass needs to be able to skip / include whole
+    // batches by bin without subdividing draw calls per-mesh.
+    const bin = sceneMesh.bin;
+    const memoryPolicy = getRendererMemoryPolicyForMesh(sceneMesh, this._renderContext.updateModePolicies);
+
+    const stats = this._stepStatsEnabled ? this._stepStats : null;
+    const key = this._getMeshBatchKey(
+      primitive,
+      hasNormals,
+      hasUVs,
+      hasFrames,
+      triplanar,
+      mipmap,
+      geometryStorage,
+      bin,
+      allocationKind,
+      memoryPolicy,
+      sceneBatchId ? sceneMesh.model.id : undefined
+    );
+    const compatibleBatches = this._batchesByKey.get(key);
+    const len = compatibleBatches?.length ?? 0;
+    const capacityReleaseVersion = this._gpuMemoryManager.capacityReleaseVersion;
+    let geometrySearches = this._batchSearchPositions.get(sceneMesh.geometry);
+    const search = geometrySearches?.get(key);
+    const firstCandidate = search && search.capacityReleaseVersion === capacityReleaseVersion
+      ? search.firstCandidate
+      : 0;
+    let nextFirstCandidate = firstCandidate;
+    let selectedBatch: MeshBatchImpl | undefined;
+    let iters = 0;
+    for (let i = firstCandidate; i < len; i++) {
+      iters++;
+      const meshBatch = compatibleBatches![i];
+      const canAddResult = meshBatch.canAddMesh(sceneMesh);
+      if (canAddResult !== GPUMemoryCheckResult.OK) {
+        // These failures cannot improve as more meshes are appended for the
+        // same geometry. Deletions/rollback reset the version; geometry edits
+        // discard its cursors. Never skip past an atlas or geometry-sharing
+        // dependent rejection, which may fit a different material/instance.
+        if (i === nextFirstCandidate && (
+          canAddResult === GPUMemoryCheckResult.NotEnoughPrimSpace
+          || canAddResult === GPUMemoryCheckResult.TooManyMeshes
+          || canAddResult === GPUMemoryCheckResult.Finalized
+        )) {
+          nextFirstCandidate = i + 1;
+        }
+        continue;
+      }
+      selectedBatch = meshBatch;
+      break;
+    }
+    if (search) {
+      search.firstCandidate = nextFirstCandidate;
+      search.capacityReleaseVersion = capacityReleaseVersion;
+    } else if (nextFirstCandidate > 0) {
+      if (!geometrySearches) {
+        geometrySearches = new Map();
+        this._batchSearchPositions.set(sceneMesh.geometry, geometrySearches);
+      }
+      geometrySearches.set(key, {firstCandidate: nextFirstCandidate, capacityReleaseVersion});
+    }
+    if (stats) stats.batchScanIters += iters;
+    if (selectedBatch) return {ok: true, value: selectedBatch};
+    if (stats) {
+      stats.newBatches++;
+    }
+
+    const result = this._gpuMemoryManager.createBatch({
+      primitive,
+      hasNormals,
+      hasUVs,
+      hasFrames,
+      triplanar,
+      mipmap,
+      geometryStorage,
+      allocationKind,
+      memoryPolicy,
+      sceneModelId: allocationKind === "dynamic" ? undefined : sceneMesh.model.id
+    });
+    if (result.ok === false) {
+      return result;
+    }
+
+    const gpuMemoryBatchIndex = result.value;
+
+    const newMeshBatch = new MeshBatchImpl({
+      primitive,
+      hasNormals,
+      hasUVs,
+      hasFrames,
+      triplanar,
+      mipmap,
+      geometryStorage,
+      bin,
+      renderContext: this._renderContext,
+      gpuMemoryManager: this._gpuMemoryManager,
+      gpuMemoryBatchIndex,
+    });
+
+    this._batches.push(newMeshBatch);
+    if (compatibleBatches) {
+      compatibleBatches.push(newMeshBatch);
+    } else {
+      this._batchesByKey.set(key, [newMeshBatch]);
+    }
+    this._batchesDirty = true;
+
+    return {ok: true, value: newMeshBatch};
+  }
+
+  private _getMeshBatchKey(
+    primitive: number,
+    hasNormals: boolean,
+    hasUVs: boolean,
+    hasFrames: boolean,
+    triplanar: boolean,
+    mipmap: boolean,
+    geometryStorage: TriangleGeometryStorageKind,
+    bin?: string,
+    allocationKind: "dynamic" | "sealedModel" | "sealedBatch" = "dynamic",
+    memoryPolicy: string = "stream",
+    sceneModelId?: string,
+    lodVariantMembershipKey: string = ""
+  ): MeshBatchKey {
+    const binKey = bin === undefined ? "u" : `s${bin}`;
+    return `${primitive}|${geometryStorage}|${hasNormals ? 1 : 0}|${hasUVs ? 1 : 0}|${hasFrames ? 1 : 0}|${triplanar ? 1 : 0}|${mipmap ? 1 : 0}|${binKey}|${allocationKind}|${memoryPolicy}|${sceneModelId ?? ""}|${lodVariantMembershipKey}`;
+  }
+
+  /**
+   * Unregisters a {@link model!scene.SceneObject | SceneObject}.
+   *
+   * Detaches and removes the {@link RendererObject}. The underlying
+   * {@link RendererMesh} instances stay registered until their SceneMeshes are
+   * destroyed.
+   *
+   * @param sceneObject - The object to unregister.
+   * @returns {@link base!core.SDKResult | SDKResult} indicating success, or `ok:false` if the object is not registered.
+   */
+  public sceneObjectDestroyed(sceneObject: SceneObject): SDKResult<any> {
+    const rendererObject = this._rendererObjects[sceneObject.id];
+    if (!rendererObject) {
+      return {
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[MeshManager.sceneObjectDestroyed] SceneObject not attached with this ID: ${sceneObject.id}`
+      };
+    }
+
+    for (const sceneMesh of sceneObject.meshes ?? []) {
+      const rendererMesh = this._rendererMeshes[sceneMesh.uniqueId];
+      if (rendererMesh) {
+        this._detachRendererMeshFromObject(rendererObject, rendererMesh);
+      }
+    }
+
+    delete this._rendererObjects[sceneObject.id];
+    this._nonBatchLODObjectIds.delete(sceneObject.id);
+    this._batchesDirty = true;
+
+    return {ok: true, value: undefined};
+  }
+
+  /**
+   * Removes a {@link RendererMesh} (if present) and destroys it.
+   *
+   * @param sceneMesh - The mesh to remove.
+   */
+  private _removeMesh(sceneMesh: SceneMesh): void {
+    const rendererMesh = this._rendererMeshes[sceneMesh.uniqueId];
+    if (!rendererMesh) {
+      return;
+    }
+
+    rendererMesh.destroy();
+    delete this._rendererMeshes[sceneMesh.uniqueId];
+    this._batchesDirty = true;
+  }
+
+  /** Resolve a representation's ordinary fallback separately for each View. */
+  public routeRepresentation(mesh: SceneMesh, view: View, ordinary: boolean): boolean {
+    let rendererMesh = this._rendererMeshes[mesh.uniqueId];
+    let allocated = false;
+
+    if (ordinary && !rendererMesh) {
+      const result = this._addMesh(mesh, undefined, true);
+      if (result.ok === false) throw new Error(result.error);
+      rendererMesh = result.value;
+      allocated = true;
+      if (mesh.object) this.sceneObjectMeshAdded(mesh.object, mesh);
+    }
+
+    if (rendererMesh) {
+      const object = mesh.object ? view.objects[mesh.object.id] : undefined;
+      rendererMesh.setObjectVisible(view.viewIndex, ordinary && (object?.visible ?? true));
+      rendererMesh.setPickable(view.viewIndex, ordinary && (object?.pickable ?? true));
+    }
+
+    return allocated;
+  }
+
+  /** Reconstruct ordinary allocation after a representation binding is removed. */
+  public restoreOrdinaryMesh(mesh: SceneMesh): void {
+    this.sceneMeshCreated(mesh);
+    if (mesh.object) this.sceneObjectMeshAdded(mesh.object, mesh);
+    for (const view of this._renderContext.viewer.viewList) this.routeRepresentation(mesh, view, true);
+  }
+
+  /**
+   * Connects an existing {@link model!scene.SceneMesh | SceneMesh} to an existing {@link model!scene.SceneObject | SceneObject}.
+   * @param sceneObject
+   * @param sceneMesh
+   */
+  public sceneObjectMeshAdded(sceneObject: SceneObject, sceneMesh: SceneMesh): SDKResult<any> {
+    if (sceneMesh.replacesGeometry && !this._rendererMeshes[sceneMesh.uniqueId]) return {ok: true, value: undefined};
+    if (sceneObject.model.headless || sceneMesh.model.headless) {
+      return {ok: true, value: undefined};
+    }
+    const rendererObject = this._rendererObjects[sceneObject.id];
+    if (!rendererObject) {
+      return {
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[MeshManager.sceneObjectMeshAdded] SceneObject not attached with this ID: ${sceneObject.id}`
+      };
+    }
+    const rendererMesh = this._rendererMeshes[sceneMesh.uniqueId];
+    if (!rendererMesh) {
+      return {
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[MeshManager.sceneObjectMeshAdded] SceneMesh not attached with this globalId: ${sceneMesh.uniqueId}`
+      };
+    }
+
+    rendererObject.addRendererMesh(rendererMesh);
+    this._updateObjectLODFilterMode(sceneObject);
+
+    const objectId = sceneObject.id;
+    const viewer = this._renderContext.viewer;
+    const numViews = Math.min(viewer.numViews, this._renderContext.memoryConfigs.maxViews);
+    for (let viewIndex = 0; viewIndex < numViews; viewIndex++) {
+      const view = viewer.viewList[viewIndex];
+      const viewObject = view.objects[objectId];
+      if (!viewObject) {
+        continue;
+      }
+      this._synchronizeMeshWithViewObject(sceneMesh, viewObject);
+    }
+
+    return {ok: true, value: undefined};
+  }
+
+  /**
+   * Synchronizes the per-view state of a {@link model!scene.SceneMesh | SceneMesh} according to a given {@link viewing!viewer.ViewObject | ViewObject}.
+   * This is used when adding a SceneMesh to a SceneObject to ensure the mesh reflects the current object view state.
+   * @param sceneMesh
+   * @param viewObject
+   */
+  private _synchronizeMeshWithViewObject(sceneMesh: SceneMesh, viewObject: ViewObject): void {
+    const rendererMesh = this._rendererMeshes[sceneMesh.uniqueId];
+    if (!rendererMesh) {
+      return;
+    }
+    this._synchronizeRendererMeshWithViewObject(rendererMesh, viewObject);
+  }
+
+  private _synchronizeRendererMeshWithViewObject(rendererMesh: RendererMesh, viewObject: ViewObject): void {
+    const viewIndex = viewObject.layer.view.viewIndex;
+    rendererMesh.setObjectVisible(viewIndex, viewObject.visible);
+    rendererMesh.setCulled(viewIndex, viewObject.culled);
+    rendererMesh.setPickable(viewIndex, viewObject.pickable);
+    rendererMesh.setClippable(viewIndex, viewObject.clippable);
+    rendererMesh.setCastsShadow(viewIndex, this._resolveCastsShadow(rendererMesh.sceneMesh, viewObject));
+    const styleBin = this._resolveStyleBin(viewObject);
+    if (styleBin) {
+      this._applyStyleBin(rendererMesh, viewIndex, styleBin);
+      return;
+    }
+    rendererMesh.clearStyleBin(viewIndex);
+    rendererMesh.setColorInView(viewIndex, viewObject.colorize);
+    rendererMesh.setOpacityInView(viewIndex, viewObject.opacityUpdated ? viewObject.opacity : null);
+  }
+
+  private _synchronizeRendererMeshWithDefaultObjectState(rendererMesh: RendererMesh, viewIndex: number, sceneObject: SceneObject): void {
+    rendererMesh.setObjectVisible(viewIndex, true);
+    rendererMesh.clearStyleBin(viewIndex);
+    rendererMesh.setCulled(viewIndex, false);
+    rendererMesh.setPickable(viewIndex, true);
+    rendererMesh.setClippable(viewIndex, sceneObject.clippable !== false);
+    rendererMesh.setCastsShadow(viewIndex, this._resolveCastsShadow(rendererMesh.sceneMesh));
+    rendererMesh.setColorInView(viewIndex, null);
+    rendererMesh.setOpacityInView(viewIndex, null);
+  }
+
+  private _resolveCastsShadow(sceneMesh: SceneMesh, viewObject?: ViewObject): boolean {
+    const mesh = sceneMesh as SceneMesh & {castsShadow?: boolean};
+    const sceneObject = sceneMesh.object as SceneObject & {castsShadow?: boolean} | null | undefined;
+    const viewObjectState = viewObject as ViewObject & {castsShadow?: boolean} | undefined;
+    return mesh.castsShadow !== false && sceneObject?.castsShadow !== false && viewObjectState?.castsShadow !== false;
+  }
+
+  private _resolveStyleBin(viewObject: ViewObject): ViewStyleBin | null {
+    const styleBins = viewObject.layer.view.styleBins.list;
+    let resolvedBin: ViewStyleBin | null = null;
+    for (let i = 0, len = styleBins.length; i < len; i++) {
+      const styleBin = styleBins[i];
+      if (styleBin.enabled && viewObject.hasStyleBin(styleBin.id)) {
+        resolvedBin = styleBin;
+      }
+    }
+    return resolvedBin;
+  }
+
+  private _applyStyleBin(rendererMesh: RendererMesh, viewIndex: number, styleBin: ViewStyleBin): void {
+    const material = styleBin.material;
+    rendererMesh.setStyleBin(
+      viewIndex,
+      material.fillColor,
+      material.fill === false ? 0 : material.fillAlpha,
+      material.edges !== false,
+      material.clearDepthBefore === true
+    );
+  }
+
+  private _synchronizeRendererObjectWithViewObject(rendererObject: RendererObject | undefined, viewObject: ViewObject): void {
+    if (!rendererObject) {
+      return;
+    }
+    const viewIndex = viewObject.layer.view.viewIndex;
+    const styleBin = this._resolveStyleBin(viewObject);
+    if (styleBin) {
+      rendererObject.setStyleBin(
+        viewIndex,
+        styleBin.material.fillColor,
+        styleBin.material.fill === false ? 0 : styleBin.material.fillAlpha,
+        styleBin.material.edges !== false,
+        styleBin.material.clearDepthBefore === true
+      );
+      return;
+    }
+    rendererObject.clearStyleBin(viewIndex);
+    rendererObject.setColorize(viewIndex, viewObject.colorize);
+    rendererObject.setOpacity(viewIndex, viewObject.opacityUpdated ? viewObject.opacity : undefined);
+  }
+
+  private _detachRendererMeshFromObject(rendererObject: RendererObject, rendererMesh: RendererMesh): void {
+    rendererObject.removeRendererMesh(rendererMesh);
+    const numViews = Math.min(this._renderContext.viewer.viewList.length, this._renderContext.memoryConfigs.maxViews);
+    for (let viewIndex = 0; viewIndex < numViews; viewIndex++) {
+      rendererMesh.setObjectVisible(viewIndex, false);
+    }
+  }
+
+  /**
+   * Disconnects an existing {@link model!scene.SceneMesh | SceneMesh} from an existing {@link model!scene.SceneObject | SceneObject}.
+   * The mesh remains cached, but is no longer rendered as part of the object.
+   * To do that, we set the mesh as having an object visibility of false for all views.
+   * @param sceneObject
+   * @param sceneMesh
+   */
+  public sceneObjectMeshRemoved(sceneObject: SceneObject, sceneMesh: SceneMesh): SDKResult<any> {
+    if (sceneObject.model.headless || sceneMesh.model.headless) {
+      return {ok: true, value: undefined};
+    }
+    const rendererObject = this._rendererObjects[sceneObject.id];
+    if (!rendererObject) {
+      return {
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[MeshManager.sceneObjectMeshAdded] SceneObject not attached with this ID: ${sceneObject.id}`
+      };
+    }
+    const rendererMesh = this._rendererMeshes[sceneMesh.uniqueId];
+    if (!rendererMesh) {
+      return {
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[MeshManager.sceneObjectMeshRemoved] SceneMesh not attached with this globalId: ${sceneMesh.uniqueId}`
+      };
+    }
+    this._detachRendererMeshFromObject(rendererObject, rendererMesh);
+    this._updateObjectLODFilterMode(sceneObject);
+    return {ok: true, value: undefined};
+  }
+
+  /**
+   * Handles changes to a {@link SceneTransform}'s matrix.
+   */
+  public sceneTransformMatrixChanged(sceneTransform: SceneTransform): void {
+    // TODO: implement transform graph propagation (if applicable)
+  }
+
+  /**
+   * Handles changes to a {@link model!scene.SceneMesh | SceneMesh}'s world matrix.
+   *
+   * Forwards to the corresponding {@link RendererMesh} (if registered).
+   */
+  public sceneMeshMatrixChanged(sceneMesh: SceneMesh): void {
+    if (sceneMesh.model.headless) {
+      return;
+    }
+    if (sceneMesh.geometry.primitive === GaussianSplatsPrimitive) {
+      this._rendererSplatMeshes[sceneMesh.uniqueId]?.setMatrix(sceneMesh.worldMatrix);
+      return;
+    }
+    this._rendererMeshes[sceneMesh.uniqueId]?.setMatrix(sceneMesh.worldMatrix);
+  }
+
+  /**
+   * Handles changes to a {@link model!scene.SceneMesh | SceneMesh}'s color.
+   *
+   * Forwards to the corresponding {@link RendererMesh} (if registered).
+   */
+  public sceneMeshColorChanged(sceneMesh: SceneMesh): void {
+    if (sceneMesh.model.headless) {
+      return;
+    }
+    this._rendererMeshes[sceneMesh.uniqueId]?.setColor(sceneMesh.effectiveColor);
+  }
+
+  /**
+   * Handles a runtime change to a {@link model!scene.SceneMaterial | SceneMaterial}'s
+   * base color. Re-uploads every mesh that uses the material — its rendered
+   * colour is `mesh.effectiveColor`, which resolves to the material's color.
+   */
+  public sceneMaterialColorChanged(sceneMaterial: SceneMaterial): void {
+    if (sceneMaterial.model.headless) {
+      return;
+    }
+    const meshes = sceneMaterial.model.meshes;
+    for (const id in meshes) {
+      const mesh = meshes[id];
+      if (mesh.material === sceneMaterial) {
+        this._rendererMeshes[mesh.uniqueId]?.setColor(mesh.effectiveColor);
+      }
+    }
+  }
+
+  /**
+   * Handles a runtime change to a {@link model!scene.SceneMaterial | SceneMaterial}'s
+   * emissive color. Re-packs the emissive factor for every mesh that uses it.
+   */
+  public sceneMaterialEmissiveColorChanged(sceneMaterial: SceneMaterial): void {
+    const meshes = sceneMaterial.model.meshes;
+    for (const id in meshes) {
+      const mesh = meshes[id];
+      if (mesh.material === sceneMaterial) {
+        this._rendererMeshes[mesh.uniqueId]?.setEmissiveColor(sceneMaterial.emissiveColor);
+      }
+    }
+  }
+
+  /**
+   * Handles changes to a {@link model!scene.SceneMesh | SceneMesh}'s opacity.
+   *
+   * Forwards to the corresponding {@link RendererMesh} (if registered).
+   */
+  public sceneMeshOpacityChanged(sceneMesh: SceneMesh): void {
+    this._rendererMeshes[sceneMesh.uniqueId]?.setOpacity(sceneMesh.effectiveOpacity);
+  }
+
+  public sceneMeshFrameTimeChanged(sceneMesh: SceneMesh): void {
+    if (sceneMesh.geometry.primitive === GaussianSplatsPrimitive) {
+      this._rendererSplatMeshes[sceneMesh.uniqueId]?.setFrameTime();
+      return;
+    }
+    this._rendererMeshes[sceneMesh.uniqueId]?.setFrameTime();
+  }
+
+  /**
+   * Handles changes to a {@link viewing!viewer.ViewObject | ViewObject}'s visibility.
+   *
+   * Updates the per-view visibility flag on the owning {@link RendererObject}.
+   */
+  public viewObjectVisibilityChanged(viewObject: ViewObject): void {
+    this._rendererObjects[viewObject.id]?.setVisible(viewObject.layer.view.viewIndex, viewObject.visible);
+  }
+
+  /**
+   * Handles changes to a {@link viewing!viewer.ViewObject | ViewObject}'s clippable state.
+   *
+   * Updates the per-view clippable flag on the owning
+   * {@link RendererObject} → re-encodes the
+   * `meshViewAttributes.renderFlags.g` bit on every
+   * underlying mesh.
+   */
+  public viewObjectClippableChanged(viewObject: ViewObject): void {
+    this._rendererObjects[viewObject.id]?.setClippable(viewObject.layer.view.viewIndex, viewObject.clippable);
+  }
+
+  /**
+   * Handles changes to a {@link viewing!viewer.ViewObject | ViewObject}'s culled state.
+   *
+   * Updates the per-view culled flag on the owning {@link RendererObject},
+   * which drops/restores the object's meshes in that view's GPU draw index.
+   */
+  public viewObjectCulledChanged(viewObject: ViewObject): void {
+    this._rendererObjects[viewObject.id]?.setCulled(viewObject.layer.view.viewIndex, viewObject.culled);
+  }
+
+  /**
+   * Handles changes to a {@link viewing!viewer.ViewObject | ViewObject}'s colorize state.
+   *
+   * Updates the per-view colorize flag on the owning {@link RendererObject}.
+   */
+  public viewObjectColorizeChanged(viewObject: ViewObject): void {
+    this._synchronizeRendererObjectWithViewObject(this._rendererObjects[viewObject.id], viewObject);
+  }
+
+  /**
+   * Handles changes to a {@link viewing!viewer.ViewObject | ViewObject}'s opacity override.
+   *
+   * Updates the per-view opacity value on the owning {@link RendererObject}.
+   *
+   * Mirrors the colorize bridge's null-or-value contract: when the
+   * ViewObject's `OPACITY_UPDATED` flag is **off** (the caller passed
+   * `null`/`undefined` to clear the override), forward `undefined` so
+   * the renderer-side `RendererMesh.setOpacityInView` falls back to
+   * the SceneMesh's `effectiveOpacity` and clears the per-mesh
+   * `ColoringOpacity` flag — without this, a cleared override leaks
+   * to the renderer as an explicit `opacity = 1` write, forces glass
+   * and curtain-wall meshes into the opaque bin, and produces
+   * uniform-dark rendering for affected models.
+   *
+   * The `ViewObject.opacity` getter itself can't return null because
+   * the field has type `number` for backwards compatibility — so the
+   * gating happens here, at the bridge, not in the getter.
+   */
+  public viewObjectOpacityChanged(viewObject: ViewObject): void {
+    this._synchronizeRendererObjectWithViewObject(this._rendererObjects[viewObject.id], viewObject);
+  }
+
+  /**
+   * Handles changes to a {@link viewing!viewer.ViewObject | ViewObject}'s style-bin membership
+   * or to the resolved style-bin definition for that object.
+   */
+  public viewObjectStyleBinChanged(viewObject: ViewObject): void {
+    this._synchronizeRendererObjectWithViewObject(this._rendererObjects[viewObject.id], viewObject);
+  }
+
+  /**
+   * Handles changes to a {@link viewing!viewer.ViewObject | ViewObject}'s pickable state.
+   *
+   * Updates the per-view pickable value on the owning {@link RendererObject}.
+   */
+  public viewObjectPickableChanged(viewObject: ViewObject): void {
+    this._rendererObjects[viewObject.id]?.setPickable(viewObject.layer.view.viewIndex, viewObject.pickable);
+  }
+
+  /**
+   * Handles updates to the camera's view matrix.
+   *
+   * Forwards the update to {@link GPUMemoryManager} so camera-dependent GPU state can be updated.
+   */
+  public cameraViewMatrixUpdated(camera: Camera) {
+    this._gpuMemoryManager.cameraViewMatrixUpdated(camera);
+  }
+
+  /**
+   * Returns the mesh batches sorted by primitive type.
+   *
+   * @remarks The array is sorted lazily in place when dirty.
+   */
+  public get sortedBatches(): MeshBatch[] {
+    if (this._batchesDirty) {
+      this._batches.sort((a, b) => a.primitive - b.primitive);
+      this._batchesDirty = false;
+    }
+    return this._batches;
+  }
+
+  /**
+   * Retrieves a mesh batch by index in the sorted batch array.
+   *
+   * @param batchIndex - Batch array index.
+   * @returns The batch if found, otherwise `null`.
+   */
+  public getBatch(batchIndex: number): MeshBatch | null {
+    return this.sortedBatches[batchIndex] ?? null;
+  }
+
+  /**
+   * Retrieves a {@link model!scene.SceneMesh | SceneMesh} within a specific GPU batch.
+   *
+   * @param batchIndex - GPU memory batch index.
+   * @param meshIndex - Mesh index within the batch.
+   */
+  public getMeshAtIndex(batchIndex: number, meshIndex: number): SceneMesh | null {
+    return this._gpuMemoryManager.getMeshAtIndex(batchIndex, meshIndex);
+  }
+
+  /**
+   * Retrieves the {@link GPUTile} associated with a given {@link model!scene.SceneMesh | SceneMesh}.
+   * @param sceneMesh
+   */
+  public getMeshTile(sceneMesh: SceneMesh): GPUTile | null {
+    return this._rendererMeshes[sceneMesh.uniqueId]?.gpuTile ?? null;
+  }
+
+  /**
+   * Returns the parameters required for a WebGL `drawArrays` call for a mesh within a batch.
+   *
+   * @param batchIndex - GPU memory batch index.
+   * @param meshIndex - Mesh index within the batch.
+   * @returns `{first, count}` if available, otherwise `null`.
+   */
+  public getDrawArraysParamsForMesh(
+    batchIndex: number,
+    meshIndex: number
+  ): { first: number; count: number } | null {
+    return this._gpuMemoryManager.getDrawArraysParamsForMesh(batchIndex, meshIndex);
+  }
+
+  /**
+   * Destroys the manager and releases renderer-side resources.
+   *
+   * @remarks
+   * - Attempts to unregister all objects/models currently present in the viewer scene.
+   * - Destroys all mesh batches.
+   * - Clears internal maps and batch storage.
+   */
+  public destroy(): void {
+    const {viewer} = this._renderContext;
+
+    if (viewer && viewer.scene) {
+      const {models, objects} = viewer.scene;
+
+      // @ts-ignore
+      Object.values(objects).forEach((sceneObject) => this.sceneObjectDestroyed(sceneObject));
+      // @ts-ignore
+      Object.values(models).forEach((sceneModel) => this.sceneModelDestroyed(sceneModel));
+
+      for (let i = 0, len = this._batches.length; i < len; i++) {
+        this._batches[i].destroy();
+      }
+    }
+
+    this._splatBatch?.destroy();
+    this._splatBatch = null;
+    this._rendererSplatMeshes = {};
+    this._splatPickMeshes.clear();
+    this._batches = [];
+    this._batchesByKey.clear();
+    this._batchSearchPositions = new WeakMap();
+    this._rendererObjects = {};
+    this._rendererMeshes = {};
+    this._batchesDirty = true;
+  }
+
+  /**
+   * Enables (or disables) opt-in step-level timing inside
+   * {@link _addMesh}. Off by default; turn on around a workload
+   * (eg. a model load) to attribute time across the substeps
+   * (`getMeshBatch`, `batchAddMesh`, `rendererMeshCtor`), then
+   * read via {@link getStepStats}.
+   *
+   * @internal
+   */
+  public enableStepStats(enabled: boolean): void {
+    this._stepStatsEnabled = enabled;
+  }
+
+  /**
+   * Zeroes the step-stats counters without changing the enabled
+   * flag. Call before the workload you want to attribute.
+   *
+   * @internal
+   */
+  public resetStepStats(): void {
+    this._stepStats = createMeshManagerStepStats();
+  }
+
+  /**
+   * Returns a snapshot of the current step-stats counters. Safe to
+   * call whether or not {@link enableStepStats} is on; values stay
+   * at the last-recorded numbers when disabled.
+   *
+   * @internal
+   */
+  public getStepStats(): MeshManagerStepStats {
+    return {...this._stepStats};
+  }
+}
+
+/**
+ * `true` when the mesh's material binds at least one of the
+ * texture slots the renderer can sample at draw time. The
+ * triplanar batch routing predicates on this — a UV-less mesh
+ * whose material binds no texture has nothing for the triplanar
+ * shader variant to do, so it stays on the standard flat-colour
+ * path.
+ */
+function _materialHasAnyTexture(sceneMesh: SceneMesh): boolean {
+  const m: any = sceneMesh.material;
+  if (!m) return false;
+  return !!(
+    m.colorTexture ||
+    m.metallicRoughnessTexture ||
+    m.normalsTexture ||
+    m.occlusionTexture ||
+    m.emissiveTexture
+  );
+}
+
+/**
+ * `true` when any texture bound to the mesh's material opted into
+ * mipmapped sampling via `SceneTextureParams.mipmap`. The batch
+ * routing reads this once at registration time to pick a
+ * mipmap-bearing atlas variant.
+ */
+function _materialHasMippedTexture(sceneMesh: SceneMesh): boolean {
+  const m: any = sceneMesh.material;
+  if (!m) return false;
+  return !!(
+    (m.colorTexture              && m.colorTexture.mipmap === true) ||
+    (m.metallicRoughnessTexture  && m.metallicRoughnessTexture.mipmap === true) ||
+    (m.normalsTexture            && m.normalsTexture.mipmap === true) ||
+    (m.occlusionTexture          && m.occlusionTexture.mipmap === true) ||
+    (m.emissiveTexture           && m.emissiveTexture.mipmap === true)
+  );
+}

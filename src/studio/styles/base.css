@@ -1,0 +1,28 @@
+        html,
+        body,
+        #app {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: #d8e1ea;
+            background: #071018;
+        }
+
+        #rendererBadge {
+            display: none !important;
+        }
+
+        body.xeokit-loading-spinner-ready > canvas:not(#demoCanvas) {
+            z-index: 0 !important;
+            pointer-events: none !important;
+        }
+
+        .app-shell {
+            width: 100%;
+            height: 100%;
+            display: grid;
+            grid-template-rows: 34px minmax(0, 1fr) var(--studio-bottom-panel-height, 180px) 22px;
+            background: #071018;
+        }

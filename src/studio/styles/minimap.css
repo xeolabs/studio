@@ -1,0 +1,15 @@
+.minimap-layers {
+    position: relative;
+}
+
+.minimap-camera-layer {
+    position: absolute;
+    inset: 1px;
+    pointer-events: none;
+}
+
+.minimap-camera-layer svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}

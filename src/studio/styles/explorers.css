@@ -1,0 +1,588 @@
+        .xeokit-data-tree,
+        .xeokit-data-explorer,
+        .xeokit-scene-tree,
+        .xeokit-viewer-explorer {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            cursor: default;
+            user-select: none;
+        }
+
+        .xeokit-data-tree.is-busy,
+        .xeokit-data-explorer.is-busy,
+        .xeokit-scene-tree.is-busy,
+        .xeokit-viewer-explorer.is-busy {
+            cursor: wait;
+        }
+
+        .xeokit-data-tree-header,
+        .xeokit-data-explorer-header,
+        .xeokit-scene-tree-header,
+        .xeokit-viewer-explorer-header {
+            flex: 0 0 auto;
+            padding: 12px 14px;
+            border-bottom: 1px solid #dbe1e8;
+            background: #ffffff;
+        }
+
+        .xeokit-data-tree-header h1,
+        .xeokit-data-explorer-header h1,
+        .xeokit-scene-tree-header h1,
+        .xeokit-viewer-explorer-header h1 {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .xeokit-data-tree-header p,
+        .xeokit-data-explorer-header p,
+        .xeokit-scene-tree-header p,
+        .xeokit-viewer-explorer-header p {
+            margin: 3px 0 0;
+            color: #697482;
+            font-size: 11px;
+        }
+
+        .xeokit-data-tree-roots,
+        .xeokit-data-tree-children,
+        .xeokit-data-explorer-roots,
+        .xeokit-data-explorer-children,
+        .xeokit-scene-tree-roots,
+        .xeokit-scene-tree-children,
+        .xeokit-viewer-explorer-roots,
+        .xeokit-viewer-explorer-children {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .xeokit-data-tree-roots,
+        .xeokit-data-explorer-roots,
+        .xeokit-scene-tree-roots,
+        .xeokit-viewer-explorer-roots {
+            flex: 1 1 auto;
+            overflow: auto;
+            padding: 4px 0 10px;
+        }
+
+        .xeokit-data-tree-row,
+        .xeokit-scene-tree-row,
+        .xeokit-viewer-explorer-row {
+            min-height: 32px;
+            display: grid;
+            grid-template-columns: 24px 20px minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 4px;
+            padding-right: 6px;
+            border-left: 3px solid transparent;
+            font-size: 14px;
+        }
+
+        .xeokit-data-explorer-row {
+            min-height: 32px;
+            display: grid;
+            grid-template-columns: 24px 20px minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 4px;
+            padding-right: 6px;
+            border-left: 3px solid transparent;
+            font-size: 14px;
+        }
+
+        .xeokit-data-tree-row:hover,
+        .xeokit-data-explorer-row:hover,
+        .xeokit-scene-tree-row:hover,
+        .xeokit-viewer-explorer-row:hover {
+            background: #edf3f9;
+        }
+
+        .xeokit-scene-tree-row.is-resource-ref {
+            color: #405268;
+        }
+
+        .xeokit-data-tree-expander,
+        .xeokit-data-tree-action,
+        .xeokit-data-explorer-expander,
+        .xeokit-data-explorer-action,
+        .xeokit-scene-tree-expander,
+        .xeokit-scene-tree-action,
+        .xeokit-viewer-explorer-expander,
+        .xeokit-viewer-explorer-action {
+            width: 24px;
+            height: 24px;
+            border: 1px solid #c7d0da;
+            border-radius: 3px;
+            background: #ffffff;
+            color: #33404d;
+            font: 700 11px/18px system-ui, sans-serif;
+            text-align: center;
+            padding: 0;
+        }
+
+        .xeokit-data-tree-expander.is-empty,
+        .xeokit-data-explorer-expander.is-empty,
+        .xeokit-scene-tree-expander.is-empty,
+        .xeokit-viewer-explorer-expander.is-empty {
+            border-color: transparent;
+            background: transparent;
+        }
+
+        .xeokit-data-tree-expander:not(:disabled),
+        .xeokit-data-tree-action,
+        .xeokit-data-explorer-expander:not(:disabled),
+        .xeokit-data-explorer-action,
+        .xeokit-scene-tree-expander:not(:disabled),
+        .xeokit-scene-tree-action:not(:disabled),
+        .xeokit-viewer-explorer-expander:not(:disabled),
+        .xeokit-viewer-explorer-action {
+            cursor: pointer;
+        }
+
+        .xeokit-data-tree-type-icon,
+        .xeokit-data-explorer-kind-icon,
+        .xeokit-scene-tree-kind-icon,
+        .xeokit-viewer-explorer-kind-icon {
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+            display: inline-grid;
+            place-items: center;
+            background: #dce7f3;
+            color: #24415f;
+        }
+
+        .xeokit-data-tree-type-icon {
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .xeokit-data-explorer-kind-icon svg,
+        .xeokit-scene-tree-kind-icon svg,
+        .xeokit-viewer-explorer-kind-icon svg,
+        .xeokit-data-tree-action-icon,
+        .xeokit-data-explorer-action-icon,
+        .xeokit-scene-tree-action-icon,
+        .xeokit-viewer-explorer-action-icon {
+            width: 14px;
+            height: 14px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .xeokit-data-tree-title,
+        .xeokit-data-explorer-title,
+        .xeokit-scene-tree-title,
+        .xeokit-viewer-explorer-title {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 6px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+            color: #1d2b3a;
+        }
+
+        .xeokit-data-tree-title > span:first-child,
+        .xeokit-data-explorer-title > span:first-child,
+        .xeokit-scene-tree-title > span:first-child,
+        .xeokit-viewer-explorer-title > span:first-child,
+        .xeokit-data-tree-detail,
+        .xeokit-data-explorer-detail,
+        .xeokit-scene-tree-detail,
+        .xeokit-viewer-explorer-detail {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+
+        .xeokit-data-tree-detail,
+        .xeokit-data-explorer-detail,
+        .xeokit-scene-tree-detail,
+        .xeokit-viewer-explorer-detail {
+            color: #315a7d;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .xeokit-data-tree-actions,
+        .xeokit-data-explorer-actions,
+        .xeokit-scene-tree-actions,
+        .xeokit-viewer-explorer-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .xeokit-scene-tree-model-coord {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            color: #5d6877;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0;
+        }
+
+        .xeokit-scene-tree-model-coord select {
+            width: 100%;
+            height: 30px;
+            min-width: 0;
+            padding: 1px 18px 1px 5px;
+            border: 1px solid #c7d0da;
+            border-radius: 3px;
+            background: #ffffff;
+            color: #25303b;
+            font: 12px/20px system-ui, sans-serif;
+        }
+
+        .xeokit-scene-tree-model-coord select:focus {
+            outline: 2px solid #b7d5ff;
+            outline-offset: 1px;
+            border-color: #7da9df;
+        }
+
+        .xeokit-data-tree-action.active,
+        .xeokit-data-explorer-action.active,
+        .xeokit-scene-tree-action.active,
+        .xeokit-viewer-explorer-action.active {
+            border-color: #2367c7;
+            background: #2367c7;
+            color: #ffffff;
+        }
+
+        .xeokit-data-tree-action:disabled,
+        .xeokit-data-explorer-action:disabled,
+        .xeokit-scene-tree-action:disabled {
+            border-color: #d6dce2;
+            background: #f2f4f6;
+            color: #9aa4af;
+            cursor: not-allowed;
+            opacity: 0.72;
+        }
+
+        .xeokit-data-explorer-action.is-danger,
+        .xeokit-scene-tree-action.is-danger {
+            border-color: #e0b4b4;
+            color: #9d3434;
+        }
+
+        .xeokit-data-explorer-action.is-danger:hover,
+        .xeokit-scene-tree-action.is-danger:hover {
+            background: #fff1f1;
+            border-color: #d58b8b;
+            color: #842525;
+        }
+
+        .xeokit-data-tree-action.is-visibility:not(.active) {
+            border-color: #c7cdd4;
+            background: #eef1f4;
+            color: #727d89;
+        }
+
+        .xeokit-data-explorer-kind-icon.kind-folder,
+        .xeokit-data-explorer-kind-icon.kind-typeGroup,
+        .xeokit-scene-tree-kind-icon.kind-folder,
+        .xeokit-viewer-explorer-kind-icon.kind-folder {
+            background: #eef0d8;
+            color: #5f6225;
+        }
+
+        .xeokit-viewer-explorer-kind-icon.kind-renderer {
+            background: #e0e8f5;
+            color: #244c7a;
+        }
+
+        .xeokit-data-explorer-kind-icon.kind-object,
+        .xeokit-scene-tree-kind-icon.kind-object,
+        .xeokit-viewer-explorer-kind-icon.kind-object {
+            background: #e2f0e4;
+            color: #2b6640;
+        }
+
+        .xeokit-data-explorer-kind-icon.kind-propertySet,
+        .xeokit-data-explorer-kind-icon.kind-property,
+        .xeokit-scene-tree-kind-icon.kind-texture,
+        .xeokit-scene-tree-kind-icon.kind-textureBinding,
+        .xeokit-viewer-explorer-kind-icon.kind-camera {
+            background: #dff0ee;
+            color: #26645f;
+        }
+
+        .xeokit-data-explorer-kind-icon.kind-relationship,
+        .xeokit-scene-tree-kind-icon.kind-mesh,
+        .xeokit-scene-tree-kind-icon.kind-geometry,
+        .xeokit-viewer-explorer-kind-icon.kind-layer {
+            background: #e7e4f3;
+            color: #4c3c7b;
+        }
+
+        .xeokit-scene-tree-kind-icon.kind-transform {
+            background: #f0e3de;
+            color: #743f2c;
+        }
+
+        .xeokit-scene-tree-kind-icon.kind-animation,
+        .xeokit-scene-tree-kind-icon.kind-animationChannel {
+            background: #f1e5f1;
+            color: #6b3b72;
+        }
+
+        .xeokit-scene-tree-kind-icon.kind-resourceRef {
+            background: #edf2f7;
+            color: #4f6277;
+        }
+
+        .xeokit-scene-tree-kind-icon.kind-property,
+        .xeokit-scene-tree-kind-icon.kind-attribute {
+            background: #eef3f2;
+            color: #455d5a;
+        }
+
+        .xeokit-viewer-explorer-kind-icon.kind-effects,
+        .xeokit-viewer-explorer-kind-icon.kind-effect,
+        .xeokit-viewer-explorer-kind-icon.kind-lights,
+        .xeokit-viewer-explorer-kind-icon.kind-light {
+            background: #f1e6d8;
+            color: #7b4f22;
+        }
+
+        .xeokit-scene-tree-kind-icon.role-positions {
+            background: #e2f0e4;
+            color: #2b6640;
+        }
+
+        .xeokit-scene-tree-kind-icon.role-normals,
+        .xeokit-scene-tree-kind-icon.role-indices,
+        .xeokit-scene-tree-kind-icon.role-edges {
+            background: #e7e4f3;
+            color: #4c3c7b;
+        }
+
+        .xeokit-scene-tree-kind-icon.role-uvs,
+        .xeokit-scene-tree-kind-icon.role-colors {
+            background: #dff0ee;
+            color: #26645f;
+        }
+
+        .xeokit-scene-tree-kind-icon.role-frames,
+        .xeokit-scene-tree-kind-icon.role-morphs,
+        .xeokit-scene-tree-kind-icon.role-splats {
+            background: #f1e5f1;
+            color: #6b3b72;
+        }
+
+        .xeokit-viewer-explorer-controls {
+            margin: 4px 10px 10px 0;
+            padding: 10px;
+            display: grid;
+            gap: 10px;
+            border: 1px solid #d7dee7;
+            border-radius: 6px;
+            background: #fbfcfe;
+        }
+
+        .xeokit-viewer-explorer-control {
+            min-width: 0;
+            display: grid;
+            grid-template-columns: minmax(112px, 0.85fr) minmax(156px, 1.35fr);
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+            color: #33404d;
+        }
+
+        .xeokit-viewer-explorer-control-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .xeokit-viewer-explorer-control input,
+        .xeokit-viewer-explorer-control select,
+        .xeokit-viewer-explorer-control textarea {
+            min-width: 0;
+            font: 12px system-ui, sans-serif;
+            color-scheme: light;
+        }
+
+        .xeokit-viewer-explorer-control select,
+        .xeokit-viewer-explorer-number-control input[type="number"],
+        .xeokit-viewer-explorer-color-control input[type="text"],
+        .xeokit-viewer-explorer-vec-control input,
+        .xeokit-viewer-explorer-matrix-control textarea {
+            box-sizing: border-box;
+            width: 100%;
+            min-height: 26px;
+            border: 1px solid #c4ceda;
+            border-radius: 4px;
+            background: linear-gradient(#ffffff, #f8fbff);
+            color: #1f2c3a;
+            box-shadow: 0 1px 0 rgba(22, 31, 42, 0.03);
+        }
+
+        .xeokit-viewer-explorer-control select {
+            height: 28px;
+            padding: 0 28px 0 8px;
+            appearance: none;
+            -webkit-appearance: none;
+            background:
+                linear-gradient(45deg, transparent 50%, #526171 50%) calc(100% - 14px) 11px / 5px 5px no-repeat,
+                linear-gradient(135deg, #526171 50%, transparent 50%) calc(100% - 9px) 11px / 5px 5px no-repeat,
+                linear-gradient(#ffffff, #f8fbff);
+            cursor: pointer;
+        }
+
+        .xeokit-viewer-explorer-control select:hover,
+        .xeokit-viewer-explorer-number-control input[type="number"]:hover,
+        .xeokit-viewer-explorer-color-control input[type="text"]:hover,
+        .xeokit-viewer-explorer-vec-control input:hover,
+        .xeokit-viewer-explorer-matrix-control textarea:hover {
+            border-color: #9bbbe7;
+        }
+
+        .xeokit-viewer-explorer-control select:focus,
+        .xeokit-viewer-explorer-number-control input[type="number"]:focus,
+        .xeokit-viewer-explorer-color-control input[type="text"]:focus,
+        .xeokit-viewer-explorer-vec-control input:focus,
+        .xeokit-viewer-explorer-matrix-control textarea:focus {
+            border-color: #2367c7;
+            box-shadow: 0 0 0 3px rgba(35, 103, 199, 0.12);
+            outline: none;
+        }
+
+        .xeokit-viewer-explorer-control input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #2367c7;
+        }
+
+        .xeokit-viewer-explorer-number-control,
+        .xeokit-viewer-explorer-color-control,
+        .xeokit-viewer-explorer-vec-control,
+        .xeokit-viewer-explorer-matrix-control {
+            min-width: 0;
+            display: grid;
+            grid-template-columns: minmax(96px, 1fr) 74px;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .xeokit-viewer-explorer-color-control {
+            grid-template-columns: 36px minmax(92px, 1fr);
+        }
+
+        .xeokit-viewer-explorer-vec-control {
+            grid-template-columns: repeat(3, minmax(54px, 1fr));
+        }
+
+        .xeokit-viewer-explorer-matrix-control {
+            grid-template-columns: minmax(0, 1fr) 52px;
+        }
+
+        .xeokit-viewer-explorer-number-control input[type="range"] {
+            appearance: none;
+            -webkit-appearance: none;
+            height: 20px;
+            background: transparent;
+            cursor: pointer;
+        }
+
+        .xeokit-viewer-explorer-number-control input[type="range"]::-webkit-slider-runnable-track {
+            height: 6px;
+            border: 1px solid #cbd5df;
+            border-radius: 999px;
+            background: #d8e2ec;
+        }
+
+        .xeokit-viewer-explorer-number-control input[type="range"]::-webkit-slider-thumb {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            margin-top: -5px;
+            border: 2px solid #2367c7;
+            border-radius: 50%;
+            background: #ffffff;
+            box-shadow: 0 1px 4px rgba(22, 31, 42, 0.22);
+        }
+
+        .xeokit-viewer-explorer-number-control input[type="range"]::-moz-range-track {
+            height: 6px;
+            border: 1px solid #cbd5df;
+            border-radius: 999px;
+            background: #d8e2ec;
+        }
+
+        .xeokit-viewer-explorer-number-control input[type="range"]::-moz-range-progress {
+            height: 6px;
+            border-radius: 999px;
+            background: #2367c7;
+        }
+
+        .xeokit-viewer-explorer-number-control input[type="range"]::-moz-range-thumb {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #2367c7;
+            border-radius: 50%;
+            background: #ffffff;
+            box-shadow: 0 1px 4px rgba(22, 31, 42, 0.22);
+        }
+
+        .xeokit-viewer-explorer-number-control input[type="number"],
+        .xeokit-viewer-explorer-color-control input[type="text"],
+        .xeokit-viewer-explorer-vec-control input {
+            padding: 2px 6px;
+        }
+
+        .xeokit-viewer-explorer-matrix-control textarea {
+            height: 62px;
+            padding: 5px 6px;
+            resize: vertical;
+            line-height: 16px;
+            white-space: pre-wrap;
+        }
+
+        .xeokit-viewer-explorer-copy-control {
+            height: 28px;
+            border: 1px solid #b6cadb;
+            border-radius: 4px;
+            background: #ffffff;
+            color: #2d5e8c;
+            font: 700 11px system-ui, sans-serif;
+            cursor: pointer;
+        }
+
+        .xeokit-viewer-explorer-copy-control:hover {
+            border-color: #9bbbe7;
+            background: #eef6ff;
+            color: #174f96;
+        }
+
+        .xeokit-viewer-explorer-color-control input[type="color"] {
+            width: 36px;
+            height: 26px;
+            padding: 0;
+            border: 1px solid #c7d0da;
+            border-radius: 4px;
+            background: #ffffff;
+        }
+        .explorer-host h1,
+        .xeokit-data-explorer h1,
+        .xeokit-data-tree h1,
+        .xeokit-scene-tree h1,
+        .xeokit-viewer-explorer h1 {
+            color: #263648;
+        }
+        .explorer-panel-host [role="treeitem"]:focus-visible {
+            outline: 2px solid #2367c7;
+            outline-offset: -2px;
+            background: #eaf2ff;
+        }

@@ -1,0 +1,285 @@
+.health-panel {
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #ffffff;
+    color: #25313f;
+    font-size: 14px;
+    line-height: 1.45;
+    container-type: inline-size;
+}
+
+.health-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 5px 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #d7dee7;
+    flex: none;
+}
+
+.health-model-label {
+    grid-column: 1 / -1;
+    color: #526171;
+    font-size: 12px;
+}
+
+.health-toolbar .el-select {
+    min-width: 0;
+}
+
+.health-scroll {
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+
+.health-summary {
+    padding: 12px;
+    border-bottom: 1px solid #d7dee7;
+    border-left: 3px solid #9caab8;
+    background: #f7f9fb;
+}
+
+.health-summary[data-tone="warning"] { border-left-color: #b97a16; }
+.health-summary[data-tone="critical"] { border-left-color: #c54848; }
+.health-summary[data-tone="healthy"] { border-left-color: #2c8f55; }
+
+.health-summary-heading {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+}
+
+.health-summary p,
+.health-issue-body p {
+    margin: 6px 0;
+    overflow-wrap: anywhere;
+}
+
+.health-summary time,
+.health-summary-heading > span,
+.health-report-phase {
+    color: #607083;
+    font-size: 12px;
+}
+
+.health-summary time,
+.health-report-phase {
+    display: block;
+}
+
+.health-summary progress {
+    width: 100%;
+    height: 8px;
+}
+
+.health-filters {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+}
+
+.health-filters .el-radio-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 0;
+}
+
+.health-filters .el-radio-button__inner {
+    padding: 7px 9px;
+    font-size: 12px;
+}
+
+.health-match-count,
+.health-data-note,
+.health-cleanup-bar > span {
+    color: #607083;
+    font-size: 12px;
+}
+
+.health-cleanup-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px 10px;
+    padding: 0 12px 12px;
+}
+
+.health-cleanup-result,
+.health-data-note {
+    margin: 0;
+    padding: 0 12px 12px;
+    overflow-wrap: anywhere;
+}
+
+.health-cleanup-result { padding-top: 12px; }
+
+.health-impact-section h2 {
+    margin: 0;
+    padding: 9px 12px;
+    border-top: 1px solid #d7dee7;
+    background: #f1f5f9;
+    color: #526171;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.health-issue-group {
+    border-bottom: 1px solid #e2e8ef;
+}
+
+.health-issue-group > summary {
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 12px;
+    list-style: none;
+    cursor: pointer;
+}
+
+.health-issue-group > summary::-webkit-details-marker { display: none; }
+.health-issue-group > summary::before { content: "\25b8"; color: #607083; }
+.health-issue-group[open] > summary::before { content: "\25be"; }
+
+.health-issue-group > summary:hover,
+.health-model-details > summary:hover {
+    background: #f3f7fc;
+}
+
+.health-issue-group > summary:focus-visible,
+.health-model-details > summary:focus-visible,
+.health-finding-message > summary:focus-visible {
+    outline: 2px solid #2367c7;
+    outline-offset: -2px;
+}
+
+.health-issue-title {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.health-severity {
+    color: #64748b;
+    font-size: 12px;
+    text-transform: capitalize;
+}
+
+.health-issue-group[data-severity="warning"] .health-severity { color: #926016; }
+.health-issue-group[data-severity="error"] .health-severity { color: #ac3535; }
+
+.health-issue-count {
+    min-width: 3ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.health-issue-body {
+    padding: 0 12px 12px;
+    font-size: 13px;
+}
+
+.health-issue-code,
+.health-cleanup-history code {
+    display: block;
+    color: #607083;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.health-review-category { margin: 4px 0 8px; }
+
+.health-findings {
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.health-findings > li {
+    padding: 10px 0;
+    border-top: 1px solid #e2e8ef;
+    overflow-wrap: anywhere;
+}
+
+.health-finding-resource {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.health-finding-resource > span {
+    color: #607083;
+    text-transform: capitalize;
+    font-size: 12px;
+}
+
+.health-finding-resource code {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.health-finding-message { margin: 6px 0; }
+.health-finding-message summary { color: #2d5e8c; cursor: pointer; }
+
+.health-finding-pages {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 0;
+    border-top: 1px solid #e2e8ef;
+    background: #ffffff;
+    color: #607083;
+    font-size: 12px;
+}
+
+.health-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 12px 20px;
+    color: #607083;
+}
+
+.health-model-details {
+    border-top: 1px solid #d7dee7;
+}
+
+.health-model-details > summary {
+    padding: 10px 12px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.health-model-details dl {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 12px;
+    padding: 0 12px 12px;
+    margin: 0;
+    font-size: 13px;
+}
+
+.health-model-details dt { color: #607083; }
+.health-model-details dd { margin: 0; overflow-wrap: anywhere; }
+.health-cleanup-history article { padding: 12px; border-top: 1px solid #e2e8ef; }
+.health-cleanup-history time { display: block; color: #607083; font-size: 12px; }
+.health-cleanup-history p { margin: 6px 0; }
+
+@container (max-width: 320px) {
+    .health-issue-group > summary { grid-template-columns: 12px minmax(0, 1fr) auto; }
+    .health-severity { grid-column: 2; grid-row: 2; }
+    .health-issue-count { grid-column: 3; grid-row: 1; }
+    .health-filters .el-radio-group { display: grid; grid-template-columns: 1fr 1fr; }
+    .health-filters .el-radio-button__inner { width: 100%; border-left: 1px solid var(--el-border-color); }
+}

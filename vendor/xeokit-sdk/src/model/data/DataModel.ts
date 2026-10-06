@@ -1,0 +1,1129 @@
+import {SDKErrorType, type SDKResult} from "../../base/core";
+import type {Data} from "./Data";
+import type {DataModelContentParams} from "./DataModelContentParams";
+import type {DataModelParams} from "./DataModelParams";
+import type {DataModelStats} from "./DataModelStats";
+import {DataObject} from "./DataObject";
+import type {DataObjectParams} from "./DataObjectParams";
+import type {PropertyParams} from "./PropertyParams";
+import {PropertySet} from "./PropertySet";
+import type {PropertySetParams} from "./PropertySetParams";
+import {Relationship} from "./Relationship";
+import type {RelationshipParams} from "./RelationshipParams";
+
+type ObjectMap<T> = { [key: string]: T };
+
+interface DataObjectTransactionState {
+  models: DataModel[];
+  relating: ObjectMap<Relationship[]>;
+  related: ObjectMap<Relationship[]>;
+}
+
+interface PropertySetTransactionState {
+  models: DataModel[];
+}
+
+interface DataModelTransactionState {
+  propertySets: ObjectMap<PropertySet>;
+  objects: ObjectMap<DataObject>;
+  rootObjects: ObjectMap<DataObject>;
+  objectsByType: ObjectMap<ObjectMap<DataObject>>;
+  relationships: Relationship[];
+  typeCounts: ObjectMap<number>;
+  stats: DataModelStats;
+  dataPropertySets: ObjectMap<PropertySet>;
+  dataObjects: ObjectMap<DataObject>;
+  dataRootObjects: ObjectMap<DataObject>;
+  dataObjectsByType: ObjectMap<ObjectMap<DataObject>>;
+  dataTypeCounts: ObjectMap<number>;
+  objectStates: Map<DataObject, DataObjectTransactionState>;
+  propertySetStates: Map<PropertySet, PropertySetTransactionState>;
+  modelRootObjects: Map<DataModel, ObjectMap<DataObject>>;
+}
+
+/**
+ * Contains a model's semantic data, as an entity-relationship graph.
+ *
+ * This data model is:
+ * * Created using {@link Data.createModel | Data.createModel}.
+ * * Stored in {@link Data.models | Data.models}.
+ * * Composed of {@link DataObject | DataObjects}, {@link Relationship | Relationships}, {@link PropertySet | PropertySets}, and {@link Property | Properties}.
+ * * Capable of importing and exporting various file formats.
+ * * Supports traversal and search of the data structure.
+ * * Can be built programmatically.
+ *
+ * For detailed usage, refer to {@link model!data | @xeokit/sdk/model/data}.
+ */
+
+export class DataModel  {
+
+  /**
+   * The Data that contains this DataModel.
+   */
+  public readonly data: Data;
+
+  /**
+   * Unique ID of this DataModel.
+   *
+   * DataModels are stored against this ID in {@link Data.models | Data.models}.
+   */
+  declare public readonly id: string;
+
+  /**
+   * The model name, if available.
+   */
+  public name?: string;
+
+  /**
+   * The project ID, if available.
+   */
+  public projectId?: string | number;
+
+  /**
+   * The revision ID, if available.
+   */
+  public revisionId?: string | number;
+
+  /**
+   * The model author, if available.
+   */
+  public author?: string;
+
+  /**
+   * The date the model was created, if available.
+   */
+  public createdAt?: string;
+
+  /**
+   * The application that created the model, if available.
+   */
+  public creatingApplication?: string;
+
+  /**
+   * The data format / schema this DataModel conforms to (e.g.
+   * `"IFC4"`, `"AP214"`, `"MyApp/v1"`).
+   *
+   * Set once at construction time via {@link DataModelParams.schema}
+   * and **immutable thereafter**. Whether schema homogeneity is enforced
+   * depends on this value:
+   *
+   * - **Defined** — the DataModel runs in *enforced* mode. Every
+   *   {@link DataObject}, {@link PropertySet}, and {@link Relationship}
+   *   added must either match this value or omit its own `schema` field
+   *   (in which case it inherits this one).
+   *   {@link DataModel.createObject}, {@link DataModel.createPropertySet}
+   *   and {@link DataModel.createRelationship} reject components with a
+   *   mismatching schema, including reused components that already belong
+   *   to another DataModel with a different schema, and reject
+   *   relationships whose endpoints carry a different schema.
+   *
+   * - **Undefined** — the DataModel runs in *free* mode. No schema
+   *   checks are performed; components may carry any (or no) schema tag,
+   *   freely mix, and freely interrelate. The caller's per-component
+   *   `schema` value is preserved as-is.
+   *
+   * Set the schema when you care about homogeneity (e.g. a strict IFC4
+   * model). Leave it undefined when you want a heterogeneous bag of
+   * components — for example, federated data assembled from several
+   * sources before classification.
+   */
+  public readonly schema?: string;
+
+  /**
+   * The{@link PropertySet | PropertySets} in this DataModel, mapped to
+   * {@link PropertySet.id | PropertySet.id}.
+   *
+   * PropertySets have globally-unique IDs and will also be stored in
+   * {@link Data.propertySets | Data.propertySets}.
+   */
+  public readonly propertySets: { [key: string]: PropertySet };
+
+  /**
+   * The {@link DataObject | DataObjects} in this DataModel, mapped to
+   * {@link DataObject.id | DataObject.id}.
+   *
+   * DataObjects have globally-unique IDs and will also be stored in
+   * {@link Data.objects | Data.objects}.
+   */
+  public objects: { [key: string]: DataObject };
+
+  /**
+   * The root {@link DataObject | DataObjects} in this DataModel, mapped
+   * to {@link DataObject.id | DataObject.id}.
+   *
+   * * This is the set of DataObjects in this DataModel that are not the *related* participant in
+   * any {@link Relationship | Relationships}, where they have no incoming Relationships and
+   * their {@link DataObject.relating} property is empty.
+   */
+  public rootObjects: { [key: string]: DataObject };
+
+  /**
+   * The {@link DataObject | DataObjects} in this DataModel, mapped to {@link DataObject.type | DataObject.type},
+   * sub-mapped to {@link DataObject.id | DataObject.id}.
+   */
+  public objectsByType: { [key: string]: { [key: string]: DataObject } };
+
+  /**
+   * The {@link Relationship | Relationships} in this DataModel.
+   *
+   * * The Relationships can be between DataObjects in different DataModels, but always within the same Data.
+   */
+  public relationships: Relationship[];
+
+  /**
+   * The count of each type of {@link DataObject | DataObject} in this DataModel, mapped
+   * to {@link DataObject.type | DataObject.type}.
+   */
+  public readonly typeCounts: { [key: string]: number };
+
+  /**
+   * Statistics on this DataModel.
+   */
+  public readonly stats: DataModelStats;
+
+    /**
+     * Indicates whether this DataModel has been destroyed.
+     */
+  public destroyed: boolean;
+
+  /**
+   * @private
+   */
+  constructor(
+    data: Data,
+    id: string,
+    dataModelParams: DataModelParams) {
+
+    this.data = data;
+
+    this.id = id;
+    this.projectId = dataModelParams.projectId || "";
+    this.revisionId = dataModelParams.revisionId || "";
+    this.author = dataModelParams.author || "";
+    this.createdAt = dataModelParams.createdAt || "";
+    this.creatingApplication = dataModelParams.creatingApplication || "";
+    this.schema = dataModelParams.schema;
+    this.propertySets = {};
+    this.objects = {};
+    this.objectsByType = {};
+    this.relationships = [];
+    this.typeCounts = {};
+    this.rootObjects = {};
+    this.destroyed = false;
+
+    this.stats = {
+      numObjects: 0,
+      numRelationships: 0,
+      numPropertySets: 0
+    };
+
+  }
+
+  /**
+   * Creates a new {@link PropertySet | PropertySet} and registers it within the `DataModel` and `Data`.
+   *
+   * - The new `PropertySet` is stored in {@link DataModel.propertySets | DataModel.propertySets} and
+   * {@link Data.propertySets | Data.propertySets}.
+   * - `PropertySet` IDs are globally unique. If a `PropertySet` with the given ID already exists in the same `Data`,
+   * it will be reused and shared across `DataModels` instead of creating a duplicate.
+   * - A `PropertySet` ID **must be unique within a single `DataModel`** but can be shared between multiple `DataModels`.
+   * - Triggers an event via {@link DataEvents.onPropertySetCreated | DataEvents.onPropertySetCreated}.
+   *
+   * See {@link model!data | @xeokit/sdk/model/data} for usage.
+   *
+   * @param propertySetCfg - Configuration parameters for the new `PropertySet`.
+   * @returns A result containing the created `PropertySet` on success, or an error message on failure.
+   */
+  createPropertySet(propertySetCfg: PropertySetParams): SDKResult<PropertySet> {
+    if (this.destroyed) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[DataModel.createPropertySet] DataModel already destroyed"
+      });
+    }
+    if (this.propertySets[propertySetCfg.id]) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: "[DataModel.createPropertySet] PropertySet with same ID already created in this DataModel. It's OK to have duplicates shared between DataModels, but they must be unique within each DataModel."
+      });
+    }
+    if (this.schema !== undefined && propertySetCfg.schema !== undefined && propertySetCfg.schema !== this.schema) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createPropertySet] PropertySet schema "${propertySetCfg.schema}" does not match DataModel schema "${this.schema}" — a DataModel with a defined schema enforces single-schema homogeneity for all its components`
+      });
+    }
+    let propertySet = this.data.propertySets[propertySetCfg.id];
+    if (propertySet) {
+      if (this.schema !== undefined && propertySet.schema !== this.schema) {
+        return this.data.logError({
+          ok: false,
+          type: SDKErrorType.InvalidInput,
+          error: `[DataModel.createPropertySet] PropertySet "${propertySetCfg.id}" already exists with schema "${propertySet.schema}", which does not match this DataModel's schema "${this.schema}"`
+        });
+      }
+      const reuseResult = this.#validateSharedPropertySetReuse(propertySet, propertySetCfg);
+      if (reuseResult.ok !== true) {
+        return reuseResult;
+      }
+      this.propertySets[propertySetCfg.id] = propertySet;
+      propertySet.models.push(this);
+      this.stats.numPropertySets++;
+      return {
+        ok: true,
+        value: propertySet
+      };
+    }
+    const propertySetSchema = this.schema ?? propertySetCfg.schema;
+    propertySet = new PropertySet(this, { ...propertySetCfg, schema: propertySetSchema });
+    this.propertySets[propertySetCfg.id] = propertySet;
+    this.data.propertySets[propertySetCfg.id] = propertySet;
+    this.stats.numPropertySets++;
+    this.data.events.onPropertySetCreated.dispatch(this.data, propertySet);
+    return {
+      ok: true,
+      value: propertySet
+    };
+  }
+
+  /**
+   * Creates a new {@link DataObject | DataObject} and registers it within the `DataModel` and `Data`.
+   *
+   * - The new `DataObject` is stored in {@link DataModel.objects | DataModel.objects} and
+   *  {@link Data.objects | Data.objects}.
+   *  - `DataObject` IDs are globally unique. If a `DataObject` with the given ID already exists in the same `Data`,
+   *  it will be reused and shared across `DataModels` instead of creating a duplicate.
+   *  - A `DataObject` ID **must be unique within a single `DataModel`** but can be shared between multiple `DataModels`.
+   *  - Triggers an event via {@link DataEvents.onDataObjectCreated | DataEvents.onObjectCreated}.
+   *
+   * See {@link model!data | @xeokit/sdk/model/data} for usage.
+   *
+   * @param dataObjectParams - Configuration parameters for the new `DataObject`.
+   * @returns A result containing the created `DataObject` on success, or an error message on failure.
+   */
+  createObject(dataObjectParams: DataObjectParams): SDKResult<DataObject> {
+    if (this.destroyed) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[DataModel.createObject] DataModel already destroyed"
+      });
+    }
+
+    const id = dataObjectParams.id;
+
+    if (this.objects[id]) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: "[DataModel.createObject] DataObject with same ID already created in this DataModel. It's OK to have duplicates shared between DataModels, but they must be unique within each DataModel."
+      });
+    }
+
+    if (this.schema !== undefined && dataObjectParams.schema !== undefined && dataObjectParams.schema !== this.schema) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createObject] DataObject schema "${dataObjectParams.schema}" does not match DataModel schema "${this.schema}" — a DataModel with a defined schema enforces single-schema homogeneity for all its components`
+      });
+    }
+
+    let dataObject = this.data.objects[id];
+
+    if (dataObject && this.schema !== undefined && dataObject.schema !== this.schema) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createObject] DataObject "${id}" already exists with schema "${dataObject.schema}", which does not match this DataModel's schema "${this.schema}"`
+      });
+    }
+
+    if (dataObject) {
+      const reuseResult = this.#validateSharedObjectReuse(dataObject, dataObjectParams);
+      if (reuseResult.ok !== true) {
+        return reuseResult;
+      }
+    }
+
+    if (!dataObject) {
+      const propertySets = [];
+
+      if (dataObjectParams.propertySetIds) {
+        for (let i = 0, len = dataObjectParams.propertySetIds.length; i < len; i++) {
+          const propertySetId = dataObjectParams.propertySetIds[i];
+          const propertySet = this.propertySets[propertySetId];
+
+          if (!propertySet) {
+            return this.data.logError({
+              ok: false,
+              type: SDKErrorType.InvalidInput,
+              error: `[DataModel.createObject] PropertySet not found: "${propertySetId}"`
+            });
+          }
+
+          propertySets.push(propertySet);
+        }
+      }
+
+      const dataObjectSchema = this.schema ?? dataObjectParams.schema;
+      dataObject = new DataObject(
+        this.data,
+        this,
+        id,
+        dataObjectParams.originalSystemId,
+        dataObjectParams.name,
+        dataObjectParams.description,
+        dataObjectParams.type,
+        dataObjectSchema,
+        propertySets
+      );
+
+      this.data.objects[id] = dataObject;
+      const type = dataObject.type;
+
+      // A freshly created object has no relationships yet, so it starts life as
+      // a traversal root. createRelationship de-roots it once it gains an
+      // incoming relationship.
+      this.data.rootObjects[id] = dataObject;
+
+      if (!this.data.objectsByType[type]) {
+        this.data.objectsByType[type] = {};
+      }
+      this.data.objectsByType[type][id] = dataObject;
+
+      this.data.typeCounts[type] = (this.data.typeCounts[type] === undefined) ? 1 : this.data.typeCounts[type] + 1;
+
+      this.data.events.onDataObjectCreated.dispatch(this.data, dataObject);
+    }
+
+    this.objects[id] = dataObject;
+    const type = dataObject.type;
+
+    // Mirror the root into this model's own root set, but only while the object
+    // is genuinely a root (no incoming relationship) — i.e. still present in
+    // Data.rootObjects. Covers both new objects and shared ones still rootless.
+    if (this.data.rootObjects[id]) {
+      this.rootObjects[id] = dataObject;
+    }
+
+    if (!this.objectsByType[type]) {
+      this.objectsByType[type] = {};
+    }
+    this.objectsByType[type][id] = dataObject;
+
+    this.typeCounts[type] = (this.typeCounts[type] === undefined) ? 1 : this.typeCounts[type] + 1;
+
+    // Register this model as an owner only if it isn't already — the
+    // DataObject constructor seeds models with its creating model, so a
+    // freshly created object would otherwise be listed twice and never
+    // purge from Data.objects on destroy (its models.length stays > 1).
+    if (dataObject.models.indexOf(this) < 0) {
+      dataObject.models.push(this);
+    }
+
+    this.stats.numObjects++;
+
+    return {
+      ok: true,
+      value: dataObject
+    };
+  }
+
+  /**
+   * Creates a new {@link Relationship | Relationship} between two existing {@link DataObject | DataObjects}.
+   *
+   * - The new `Relationship` is stored in {@link DataModel.relationships | DataModel.relationships}.
+   * - Triggers an event via {@link DataEvents.onRelationshipCreated | DataEvents.onRelationshipCreated}.
+   *
+   * See {@link model!data | @xeokit/sdk/model/data} for usage
+   *
+   * @param relationshipParams - Configuration parameters for the new `Relationship`.
+   * @returns A result containing the created `Relationship` on success, or an error message on failure.
+   */
+  createRelationship(relationshipParams: RelationshipParams): SDKResult<Relationship> {
+    if (this.destroyed) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[DataModel.createRelationship] DataModel already destroyed"
+      });
+    }
+    const relatingObject = this.data.objects[relationshipParams.relatingObjectId];
+    if (!relatingObject) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createRelationship] Relating DataObject not found: ${relationshipParams.relatingObjectId}`
+      });
+    }
+    const relatedObject = this.data.objects[relationshipParams.relatedObjectId];
+    if (!relatedObject) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createRelationship] Related DataObject not found: ${relationshipParams.relatedObjectId}`
+      });
+    }
+    if (this.schema !== undefined) {
+      if (relationshipParams.schema !== undefined && relationshipParams.schema !== this.schema) {
+        return this.data.logError({
+          ok: false,
+          type: SDKErrorType.InvalidInput,
+          error: `[DataModel.createRelationship] Relationship schema "${relationshipParams.schema}" does not match DataModel schema "${this.schema}" — a DataModel with a defined schema enforces single-schema homogeneity for all its components`
+        });
+      }
+      if (relatingObject.schema !== this.schema) {
+        return this.data.logError({
+          ok: false,
+          type: SDKErrorType.InvalidInput,
+          error: `[DataModel.createRelationship] Relating DataObject "${relatingObject.id}" has schema "${relatingObject.schema}", which does not match this DataModel's schema "${this.schema}"`
+        });
+      }
+      if (relatedObject.schema !== this.schema) {
+        return this.data.logError({
+          ok: false,
+          type: SDKErrorType.InvalidInput,
+          error: `[DataModel.createRelationship] Related DataObject "${relatedObject.id}" has schema "${relatedObject.schema}", which does not match this DataModel's schema "${this.schema}"`
+        });
+      }
+    }
+    const relationshipSchema = this.schema ?? relationshipParams.schema ?? relatingObject.schema;
+    const relation = new Relationship(relationshipParams.type, relationshipSchema, relatingObject, relatedObject);
+    if (!relatedObject.relating[relationshipParams.type]) {
+      relatedObject.relating[relationshipParams.type] = [];
+    }
+    relatedObject.relating[relationshipParams.type].push(relation);
+    // The related object now has an incoming relationship, so it is no longer a
+    // traversal root — remove it from the root sets of Data and every model
+    // that owns it.
+    delete this.data.rootObjects[relatedObject.id];
+    for (let i = 0, len = relatedObject.models.length; i < len; i++) {
+      delete relatedObject.models[i].rootObjects[relatedObject.id];
+    }
+    if (!relatingObject.related[relationshipParams.type]) {
+      relatingObject.related[relationshipParams.type] = [];
+    }
+    relatingObject.related[relationshipParams.type].push(relation);
+    this.relationships.push(relation);
+    this.stats.numRelationships++;
+    this.data.events.onRelationshipCreated.dispatch(this.data, relation);
+    return {
+      ok: true,
+      value: relation
+    };
+  }
+
+  /**
+   * Adds components from the specified `DataModelContentParams` to the `DataModel`.
+   *
+   * @param dataModelParams - Parameters to configure and populate the `DataModel`.
+   * @returns A result indicating success or an error message on failure.
+   */
+  fromParams(dataModelParams: DataModelContentParams): SDKResult<any> {
+    if (this.destroyed) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[DataModel.fromParams] DataModel already destroyed"
+      });
+    }
+    const transactionState = this.#snapshotTransactionState();
+    if (dataModelParams.propertySets) {
+      for (let i = 0, len = dataModelParams.propertySets.length; i < len; i++) {
+        const result = this.createPropertySet(dataModelParams.propertySets[i]);
+        if (result.ok!== true) {
+          this.#restoreTransactionState(transactionState);
+          return this.data.logError({
+            ok: false,
+            type: SDKErrorType.InvalidInput,
+            error: `[DataModel.fromParams] Failed to create PropertySet -> ${result.error}`
+          });
+        }
+      }
+    }
+    if (dataModelParams.objects) {
+      for (let i = 0, len = dataModelParams.objects.length; i < len; i++) {
+        const result = this.createObject(dataModelParams.objects[i]);
+        if (result.ok!== true) {
+          this.#restoreTransactionState(transactionState);
+          return this.data.logError({
+            ok: false,
+            type: SDKErrorType.InvalidInput,
+            error: `[DataModel.fromParams] Failed to create DataObject -> ${result.error}`
+          });
+        }
+      }
+    }
+    if (dataModelParams.relationships) {
+      for (let i = 0, len = dataModelParams.relationships.length; i < len; i++) {
+        const result = this.createRelationship(dataModelParams.relationships[i]);
+        if (result.ok!== true) {
+          this.#restoreTransactionState(transactionState);
+          return this.data.logError({
+            ok: false,
+            type: SDKErrorType.InvalidInput,
+            error: `[DataModel.fromParams] Failed to create Relationship -> ${result.error}`
+          });
+        }
+      }
+    }
+    return {
+      ok: true,
+      value: undefined
+    };
+  }
+
+  /**
+   * Converts this `DataModel` to a `DataModelParams` object.
+   *
+   * `DataModelParams` is exported as a self-contained document: every
+   * exported {@link Relationship | Relationship} endpoint must also be
+   * exported as an object owned by this `DataModel`. If a relationship
+   * references an endpoint outside this `DataModel`, export fails with
+   * `SDKErrorType.InvalidOperation` instead of emitting a dangling
+   * relationship reference.
+   *
+   * @returns A result containing the `DataModelParams` on success, or an error message on failure.
+   */
+  toParams(): SDKResult<DataModelParams> {
+    if (this.destroyed) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[DataModel.toParams] DataModel already destroyed"
+      });
+    }
+    const dataModelParams = <DataModelParams>{
+      id: this.id,
+      propertySets: [],
+      objects: [],
+      relationships: []
+    };
+    if (this.projectId           !== undefined) dataModelParams.projectId           = this.projectId;
+    if (this.revisionId          !== undefined) dataModelParams.revisionId          = this.revisionId;
+    if (this.author              !== undefined) dataModelParams.author              = this.author;
+    if (this.createdAt           !== undefined) dataModelParams.createdAt           = this.createdAt;
+    if (this.creatingApplication !== undefined) dataModelParams.creatingApplication = this.creatingApplication;
+    if (this.schema              !== undefined) dataModelParams.schema              = this.schema;
+    for (const id in this.propertySets) {
+      const propertySet = this.propertySets[id];
+      const propertySetParams = <PropertySetParams>{
+        id,
+        name: propertySet.name,
+        properties: [],
+        type: propertySet.type,
+        schema: propertySet.schema,
+        originalSystemId: propertySet.originalSystemId
+      };
+      for (let i = 0, len = propertySet.properties.length; i < len; i++) {
+        const property = propertySet.properties[i];
+        const propertyParams = <PropertyParams>{
+          name: property.name,
+          value: property.value,
+          type: property.type,
+          valueType: property.valueType,
+          description: property.description
+        };
+        propertySetParams.properties.push(propertyParams);
+      }
+      dataModelParams.propertySets?.push(propertySetParams);
+    }
+    for (const id in this.objects) {
+      const dataObject = this.objects[id];
+      const dataObjectParams = <DataObjectParams>{
+        id,
+        originalSystemId: dataObject.originalSystemId,
+        type: dataObject.type,
+        schema: dataObject.schema,
+        name: dataObject.name,
+        propertySetIds: []
+      };
+      if (dataObject.description !== undefined) {
+        dataObjectParams.description = dataObject.description;
+      }
+      if (dataObject.propertySets) {
+        for (let i = 0, len = dataObject.propertySets.length; i < len; i++) {
+          const propertySet = dataObject.propertySets[i];
+          if (this.propertySets[propertySet.id]) {
+            dataObjectParams.propertySetIds?.push(propertySet.id);
+          }
+        }
+      }
+      dataModelParams.objects?.push(dataObjectParams);
+    }
+    for (let i = 0, len = this.relationships.length; i < len; i++) {
+      const relationship = this.relationships[i];
+      const relationshipExportResult = this.#validateRelationshipExport(relationship);
+      if (relationshipExportResult.ok !== true) {
+        return relationshipExportResult;
+      }
+      const relationParams = <RelationshipParams>{
+        type: relationship.type,
+        schema: relationship.schema,
+        relatingObjectId: relationship.relatingObject.id,
+        relatedObjectId: relationship.relatedObject.id
+      };
+      dataModelParams.relationships?.push(relationParams);
+    }
+    return {
+      ok: true,
+      value: dataModelParams
+    };
+  }
+
+  /**
+   * Destroys this `DataModel` and all its components.
+   *
+   * Fires the {@link DataEvents.onDataObjectDestroyed | DataEvents.onObjectDestroyed} event.
+   *
+   * @returns A result indicating success or an error message on failure.
+   */
+  destroy(): SDKResult<void> {
+    if (this.destroyed) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[DataModel.destroy] DataModel already destroyed"
+      });
+    }
+    this.#destroyComponents();
+    this.destroyed = true;
+    this.data._destroyModel(this);
+    return {
+      ok: true,
+      value: undefined
+    };
+  }
+
+  /**
+   * Discards a model that failed during creation before it was registered in
+   * {@link Data.models}.
+   *
+   * @private
+   */
+  _discard(): void {
+    if (this.destroyed) {
+      return;
+    }
+    this.#destroyComponents();
+    this.destroyed = true;
+  }
+
+  #validateRelationshipExport(relationship: Relationship): SDKResult<void> {
+    const relatingObject = relationship.relatingObject;
+    const relatedObject = relationship.relatedObject;
+    if (!relatingObject || this.objects[relatingObject.id] !== relatingObject) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[DataModel.toParams] Cannot export DataModel "${this.id}" because Relationship "${relationshipLocator(relationship)}" references relating DataObject "${relatingObject ? relatingObject.id : "<null>"}" that is not in this DataModel. DataModelParams export requires every relationship endpoint to be owned by the exported DataModel.`
+      });
+    }
+    if (!relatedObject || this.objects[relatedObject.id] !== relatedObject) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: `[DataModel.toParams] Cannot export DataModel "${this.id}" because Relationship "${relationshipLocator(relationship)}" references related DataObject "${relatedObject ? relatedObject.id : "<null>"}" that is not in this DataModel. DataModelParams export requires every relationship endpoint to be owned by the exported DataModel.`
+      });
+    }
+    return {
+      ok: true,
+      value: undefined
+    };
+  }
+
+  #validateSharedPropertySetReuse(propertySet: PropertySet, propertySetParams: PropertySetParams): SDKResult<void> {
+    if (propertySetParams.name !== propertySet.name) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createPropertySet] PropertySet "${propertySetParams.id}" already exists with name "${propertySet.name}", which does not match requested name "${propertySetParams.name}"`
+      });
+    }
+    if (propertySetParams.type !== propertySet.type) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createPropertySet] PropertySet "${propertySetParams.id}" already exists with type "${propertySet.type}", which does not match requested type "${propertySetParams.type}"`
+      });
+    }
+    if (propertySetParams.schema !== undefined && propertySetParams.schema !== propertySet.schema) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createPropertySet] PropertySet "${propertySetParams.id}" already exists with schema "${propertySet.schema}", which does not match requested schema "${propertySetParams.schema}"`
+      });
+    }
+    if (propertySetParams.originalSystemId !== undefined && propertySetParams.originalSystemId !== propertySet.originalSystemId) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createPropertySet] PropertySet "${propertySetParams.id}" already exists with originalSystemId "${propertySet.originalSystemId}", which does not match requested originalSystemId "${propertySetParams.originalSystemId}"`
+      });
+    }
+    if (!propertyParamsListEqual(propertySet.properties, propertySetParams.properties || [])) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createPropertySet] PropertySet "${propertySetParams.id}" already exists with different properties`
+      });
+    }
+    return {
+      ok: true,
+      value: undefined
+    };
+  }
+
+  #snapshotTransactionState(): DataModelTransactionState {
+    const models = new Set<DataModel>();
+    models.add(this);
+    for (const id in this.data.models) {
+      models.add(this.data.models[id]);
+    }
+
+    const objectStates = new Map<DataObject, DataObjectTransactionState>();
+    for (const id in this.data.objects) {
+      const dataObject = this.data.objects[id];
+      objectStates.set(dataObject, {
+        models: dataObject.models.slice(),
+        relating: cloneRelationshipMap(dataObject.relating),
+        related: cloneRelationshipMap(dataObject.related)
+      });
+      for (let i = 0, len = dataObject.models.length; i < len; i++) {
+        models.add(dataObject.models[i]);
+      }
+    }
+
+    const propertySetStates = new Map<PropertySet, PropertySetTransactionState>();
+    for (const id in this.data.propertySets) {
+      const propertySet = this.data.propertySets[id];
+      propertySetStates.set(propertySet, {
+        models: propertySet.models.slice()
+      });
+      for (let i = 0, len = propertySet.models.length; i < len; i++) {
+        models.add(propertySet.models[i]);
+      }
+    }
+
+    const modelRootObjects = new Map<DataModel, ObjectMap<DataObject>>();
+    models.forEach(model => {
+      modelRootObjects.set(model, cloneObjectMap(model.rootObjects));
+    });
+
+    return {
+      propertySets: cloneObjectMap(this.propertySets),
+      objects: cloneObjectMap(this.objects),
+      rootObjects: cloneObjectMap(this.rootObjects),
+      objectsByType: cloneNestedObjectMap(this.objectsByType),
+      relationships: this.relationships.slice(),
+      typeCounts: cloneObjectMap(this.typeCounts),
+      stats: {
+        numObjects: this.stats.numObjects,
+        numRelationships: this.stats.numRelationships,
+        numPropertySets: this.stats.numPropertySets
+      },
+      dataPropertySets: cloneObjectMap(this.data.propertySets),
+      dataObjects: cloneObjectMap(this.data.objects),
+      dataRootObjects: cloneObjectMap(this.data.rootObjects),
+      dataObjectsByType: cloneNestedObjectMap(this.data.objectsByType),
+      dataTypeCounts: cloneObjectMap(this.data.typeCounts),
+      objectStates,
+      propertySetStates,
+      modelRootObjects
+    };
+  }
+
+  #restoreTransactionState(state: DataModelTransactionState): void {
+    restoreObjectMap(this.propertySets, state.propertySets);
+    restoreObjectMap(this.objects, state.objects);
+    restoreObjectMap(this.rootObjects, state.rootObjects);
+    restoreObjectMap(this.objectsByType, state.objectsByType);
+    restoreArray(this.relationships, state.relationships);
+    restoreObjectMap(this.typeCounts, state.typeCounts);
+    this.stats.numObjects = state.stats.numObjects;
+    this.stats.numRelationships = state.stats.numRelationships;
+    this.stats.numPropertySets = state.stats.numPropertySets;
+
+    restoreObjectMap(this.data.propertySets, state.dataPropertySets);
+    restoreObjectMap(this.data.objects, state.dataObjects);
+    restoreObjectMap(this.data.rootObjects, state.dataRootObjects);
+    restoreObjectMap(this.data.objectsByType, state.dataObjectsByType);
+    restoreObjectMap(this.data.typeCounts, state.dataTypeCounts);
+
+    state.objectStates.forEach((objectState, dataObject) => {
+      restoreArray(dataObject.models, objectState.models);
+      restoreObjectMap(dataObject.relating, objectState.relating);
+      restoreObjectMap(dataObject.related, objectState.related);
+    });
+
+    state.propertySetStates.forEach((propertySetState, propertySet) => {
+      restoreArray(propertySet.models, propertySetState.models);
+    });
+
+    state.modelRootObjects.forEach((rootObjects, model) => {
+      restoreObjectMap(model.rootObjects, rootObjects);
+    });
+  }
+
+  #destroyComponents(): void {
+    // 1) Unwire every relationship this model created, from BOTH endpoints'
+    //    relating/related maps. (The Relationship objects are discarded with
+    //    the model.) Done first and ungated, so it runs for every object — not
+    //    only the last one of each type, as the previous code did.
+    for (let i = 0, len = this.relationships.length; i < len; i++) {
+      const relation = this.relationships[i];
+      const type = relation.type;
+      this.#removeRelation(relation.relatingObject.related[type], relation);
+      this.#removeRelation(relation.relatedObject.relating[type], relation);
+      this.data.events.onRelationshipDestroyed.dispatch(this.data, relation);
+    }
+
+    // 2) Remove this model's objects from Data — or just detach this model
+    //    from objects that are shared with other DataModels.
+    for (const id in this.objects) {
+      const dataObject = this.objects[id];
+      if (dataObject.models.length > 1) {
+        this.#removeObjectFromModels(dataObject);
+      } else {
+        delete this.data.objects[id];
+        delete this.data.rootObjects[id];
+        const type = dataObject.type;
+        const bucket = this.data.objectsByType[type];
+        if (bucket) {
+          delete bucket[id];
+        }
+        if ((--this.data.typeCounts[type]) === 0) {
+          delete this.data.typeCounts[type];
+          delete this.data.objectsByType[type];
+        }
+        this.data.events.onDataObjectDestroyed.dispatch(this.data, dataObject);
+      }
+    }
+
+    // 3) A surviving (shared) object that lost its last incoming relationship
+    //    is a traversal root again — restore it to the root sets.
+    for (let i = 0, len = this.relationships.length; i < len; i++) {
+      const related = this.relationships[i].relatedObject;
+      if (this.data.objects[related.id] && !this.#hasIncomingRelationship(related)) {
+        this.data.rootObjects[related.id] = related;
+        for (let j = 0, lenj = related.models.length; j < lenj; j++) {
+          related.models[j].rootObjects[related.id] = related;
+        }
+      }
+    }
+
+    // 4) Detach or purge property sets owned by this model. PropertySets are
+    //    globally registered like DataObjects, so shared sets survive until the
+    //    final owning DataModel goes away.
+    for (const id in this.propertySets) {
+      const propertySet = this.propertySets[id];
+      this.#removePropertySetFromModels(propertySet);
+      if (propertySet.models.length === 0) {
+        delete this.data.propertySets[id];
+        this.data.events.onPropertySetDestroyed.dispatch(this.data, propertySet);
+      }
+    }
+  }
+
+  #removePropertySetFromModels(propertySet: PropertySet) {
+    for (let i = 0, len = propertySet.models.length; i < len; i++) {
+      if (propertySet.models[i] === this) {
+        propertySet.models.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  #validateSharedObjectReuse(dataObject: DataObject, dataObjectParams: DataObjectParams): SDKResult<void> {
+    if (dataObjectParams.type !== dataObject.type) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createObject] DataObject "${dataObjectParams.id}" already exists with type "${dataObject.type}", which does not match requested type "${dataObjectParams.type}"`
+      });
+    }
+    if (dataObjectParams.schema !== undefined && dataObjectParams.schema !== dataObject.schema) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createObject] DataObject "${dataObjectParams.id}" already exists with schema "${dataObject.schema}", which does not match requested schema "${dataObjectParams.schema}"`
+      });
+    }
+    if (dataObjectParams.name !== undefined && dataObjectParams.name !== dataObject.name) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createObject] DataObject "${dataObjectParams.id}" already exists with name "${dataObject.name}", which does not match requested name "${dataObjectParams.name}"`
+      });
+    }
+    if (dataObjectParams.description !== undefined && dataObjectParams.description !== dataObject.description) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createObject] DataObject "${dataObjectParams.id}" already exists with a different description`
+      });
+    }
+    if (dataObjectParams.originalSystemId !== undefined && dataObjectParams.originalSystemId !== dataObject.originalSystemId) {
+      return this.data.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[DataModel.createObject] DataObject "${dataObjectParams.id}" already exists with originalSystemId "${dataObject.originalSystemId}", which does not match requested originalSystemId "${dataObjectParams.originalSystemId}"`
+      });
+    }
+    if (dataObjectParams.propertySetIds) {
+      const propertySets = dataObject.propertySets || [];
+      for (let i = 0, len = dataObjectParams.propertySetIds.length; i < len; i++) {
+        const propertySetId = dataObjectParams.propertySetIds[i];
+        const propertySet = this.propertySets[propertySetId];
+        if (!propertySet) {
+          return this.data.logError({
+            ok: false,
+            type: SDKErrorType.InvalidInput,
+            error: `[DataModel.createObject] PropertySet not found: "${propertySetId}"`
+          });
+        }
+        if (propertySets.indexOf(propertySet) < 0) {
+          return this.data.logError({
+            ok: false,
+            type: SDKErrorType.InvalidInput,
+            error: `[DataModel.createObject] PropertySet "${propertySetId}" is not associated with existing DataObject "${dataObjectParams.id}"`
+          });
+        }
+      }
+    }
+    return {
+      ok: true,
+      value: undefined
+    };
+  }
+
+  #removeObjectFromModels(dataObject: DataObject) {
+    for (let i = 0, len = dataObject.models.length; i < len; i++) {
+      if (dataObject.models[i] === this) {
+         dataObject.models.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  #removeRelation(list: Relationship[] | undefined, relation: Relationship) {
+    if (!list) {
+      return;
+    }
+    const i = list.indexOf(relation);
+    if (i >= 0) {
+      list.splice(i, 1);
+    }
+  }
+
+  #hasIncomingRelationship(dataObject: DataObject): boolean {
+    const relating = dataObject.relating;
+    for (const type in relating) {
+      if (relating[type].length > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
+function cloneObjectMap<T>(map: ObjectMap<T>): ObjectMap<T> {
+  const clone: ObjectMap<T> = {};
+  for (const id in map) {
+    clone[id] = map[id];
+  }
+  return clone;
+}
+
+function cloneNestedObjectMap<T>(map: ObjectMap<ObjectMap<T>>): ObjectMap<ObjectMap<T>> {
+  const clone: ObjectMap<ObjectMap<T>> = {};
+  for (const id in map) {
+    clone[id] = cloneObjectMap(map[id]);
+  }
+  return clone;
+}
+
+function cloneRelationshipMap(map: ObjectMap<Relationship[]>): ObjectMap<Relationship[]> {
+  const clone: ObjectMap<Relationship[]> = {};
+  for (const type in map) {
+    clone[type] = map[type].slice();
+  }
+  return clone;
+}
+
+function restoreObjectMap<T>(target: ObjectMap<T>, source: ObjectMap<T>): void {
+  for (const id in target) {
+    delete target[id];
+  }
+  for (const id in source) {
+    target[id] = source[id];
+  }
+}
+
+function restoreArray<T>(target: T[], source: T[]): void {
+  target.length = 0;
+  for (let i = 0, len = source.length; i < len; i++) {
+    target.push(source[i]);
+  }
+}
+
+function relationshipLocator(relationship: Relationship): string {
+  const relatingId = relationship.relatingObject ? relationship.relatingObject.id : "?";
+  const relatedId = relationship.relatedObject ? relationship.relatedObject.id : "?";
+  return `${relatingId}->${relatedId}#${relationship.type}`;
+}
+
+function propertyParamsListEqual(properties: readonly PropertyParams[], propertyParams: readonly PropertyParams[]): boolean {
+  if (properties.length !== propertyParams.length) {
+    return false;
+  }
+  for (let i = 0, len = properties.length; i < len; i++) {
+    const property = properties[i];
+    const propertyParam = propertyParams[i];
+    if (
+      property.name !== propertyParam.name ||
+      property.type !== propertyParam.type ||
+      property.valueType !== propertyParam.valueType ||
+      property.description !== propertyParam.description ||
+      !propertyValueEqual(property.value, propertyParam.value)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function propertyValueEqual(a: any, b: any): boolean {
+  if (Object.is(a, b)) {
+    return true;
+  }
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) {
+    return false;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+      return false;
+    }
+    for (let i = 0, len = a.length; i < len; i++) {
+      if (!propertyValueEqual(a[i], b[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+  for (let i = 0, len = aKeys.length; i < len; i++) {
+    const key = aKeys[i];
+    if (!Object.prototype.hasOwnProperty.call(b, key) || !propertyValueEqual(a[key], b[key])) {
+      return false;
+    }
+  }
+  return true;
+}

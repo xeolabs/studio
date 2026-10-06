@@ -1,0 +1,4 @@
+@import "./studio/styles/shell.css";
+@import "./studio/explorers/tree/controls.css";
+@import "./studio/styles/explorer-controls.css";
+@import "./studio/styles/minimap.css";

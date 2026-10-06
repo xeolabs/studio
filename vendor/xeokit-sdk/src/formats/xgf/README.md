@@ -1,0 +1,639 @@
+---
+title: XGF Format Guide
+---
+# XGF (xeokit Geometry Format) Loader / Exporter
+
+`XGFLoader` reads xeokit's native binary geometry format (`.xgf`) into a
+`SceneModel`, and `XGFExporter` writes a `SceneModel` back out as XGF.
+
+This document describes the binary container, the on-disk schema, and the
+pipelines a file follows from bytes to a live scene (and back).
+
+---
+
+## 1. What XGF is
+
+XGF is xeokit's compact binary format for **geometry, materials,
+textures, transforms, and objects** — the visual half of a model. It's
+positional, length-prefixed, and designed to be loaded from one binary
+chunk into a handful of typed-array views.
+
+Two roles:
+
+- **Visual half** — the SceneModel — lives in `.xgf`.
+- **Semantic half** — the DataModel — typically lives in a separate
+  `.json` sidecar (one of the xeokit `datamodel` / `metamodel`
+  formats). Pair them by id and load them together.
+
+The XGF loader's DataModel output is intentionally minimal: every
+SceneObject id also becomes a `BasicEntity` DataObject so the
+SceneModel ↔ DataModel pair is always queryable. Richer semantics
+come from a paired DataModel JSON.
+
+### Trade-offs
+
+- Positions are **quantised to 16-bit** against per-geometry AABBs —
+  no precision loss for typical model scales (mm precision at world
+  sizes up to ~65 m per geometry; rescale your AABBs for bigger
+  scenes).
+- Normals are **oct-encoded** into two `uint16`s per vertex, decoded
+  in the vertex shader.
+- UVs are `float32` so tiling values outside `[0, 1]` survive intact.
+- Edge indices ride alongside triangle indices so the renderer's
+  wireframe overlay is free.
+- The format intentionally has **no compression layer of its own** —
+  use HTTP transport-level compression (gzip / brotli) at delivery
+  time.
+
+---
+
+## 2. Binary container
+
+Every XGF file is the same outer container — a version tag, an
+`(offset, length)` table, and a sequence of typed-array payloads laid
+out at those offsets:
+
+```
+   ┌──────────────────────────────────────────────────────────────┐
+   │ 0..3        uint32 version              (1)                  │
+   ├──────────────────────────────────────────────────────────────┤
+   │ 4..7        uint32 entry[0].byteOffset                       │
+   │ 8..11       uint32 entry[0].byteLength                       │
+   │ 12..15      uint32 entry[1].byteOffset                       │
+   │ 16..19      uint32 entry[1].byteLength                       │
+   │ ...         (one (offset, length) pair per entry)            │
+   ├──────────────────────────────────────────────────────────────┤
+   │ entry[0]    typed-array payload  (padded to its BPE align)   │
+   │ entry[1]    typed-array payload                              │
+   │ ...                                                          │
+   └──────────────────────────────────────────────────────────────┘
+```
+
+- **Little-endian.** The reader byte-swaps on big-endian hosts (a
+  one-time `Uint16Array[0] === 1` probe decides whether swapping is
+  needed).
+- **Position alignment.** Each payload starts at the smallest offset
+  ≥ the running cursor that's an integer multiple of the payload's
+  `BYTES_PER_ELEMENT`. Padding bytes between payloads are unused.
+- **Positional layout.** The reader and writer walk the same fixed
+  list of entries in the same order. There's no name dictionary —
+  adding or removing an entry is a schema-version-breaking change.
+- **JSON-as-bytes.** A handful of entries (e.g. `eachObjectId`,
+  `eachMaterialId`) are JSON arrays of strings; they ride in the
+  container as `Uint8Array` blobs the reader `JSON.parse`s on
+  demand.
+
+---
+
+## 3. Versions and streaming contract
+
+The container header's first `uint32` is the schema tag:
+
+- `1` — XGF v1, a self-contained visual model.
+- `2` — XGF v2, v1-compatible visual data plus stable asset IDs,
+  references-only meshes, and `SceneTransform` hierarchies.
+
+XGF v2 is the streaming contract. A v2 file has exactly one of these
+chunk roles:
+
+- **`full`** — self-contained geometry, materials, textures, transforms,
+  meshes and objects. This is the default exporter output.
+- **`assetLibrary`** — reusable geometry, material and texture assets only.
+  It creates shared assets in the target `SceneModel` and does not create
+  meshes or objects.
+- **`referencesOnly`** — transforms, meshes and objects only. Meshes bind to
+  geometry/material IDs that must already exist in the target `SceneModel`,
+  normally because an `assetLibrary` chunk was loaded first.
+
+The low-level XGF loader does not fetch dependencies, maintain a manifest, or
+manage chunk lifetimes. It only applies the supplied payload to the supplied
+`SceneModel`. Missing asset references are reported through
+`Scene.events.onError` as `InvalidInput` and the load path returns without
+throwing. Streaming orchestration should sit above `XGFLoader`.
+
+Streaming code should pair each XGF v2 chunk with an
+`XGFChunkManifest` JSON record. The manifest is intentionally separate from
+the binary payload so schedulers can inspect bounds and dependencies before
+fetching the XGF bytes.
+
+## 4. The format
+
+A full/self-contained container carries:
+
+- **Geometry** — quantised positions, octahedral normals, UVs, per-vertex
+  RGBA colours, indices, edge indices, per-geometry AABBs, XGF v2
+  fixed-topology geometry frames, per-mesh frame times and modelling matrices.
+- **3D Gaussian Splatting** — per-splat scales (float xyz) and rotation
+  quaternions (xyzw, byte-quantised), plus the `GaussianSplatsPrimitive` type.
+- **Materials** — full PBR + alpha mode / cutoff, with the RGB colour factor
+  stored as **float** (an unclamped multiplier that can exceed 1.0), per-mesh
+  material references (inline RGBA as the fallback when no material is set), and
+  per-material `triplanarScale` for world-projected texturing. XGF v2 also
+  optionally stores flat optical material fields for transmissive dielectrics:
+  `transmission`, effective material `thickness`, `attenuationColor` and
+  `attenuationDistance`.
+- **Textures** — image bytes + sampler params + per-texture colour-space
+  encoding (sRGB vs linear).
+
+---
+
+## 5. Geometry Frames and `frameTime`
+
+XGF v2 preserves `SceneGeometry.framesCompressed` and
+`SceneMesh.frameTime`. This is intended for small-to-moderate fixed-topology
+deformations such as cloth poses, moving lines/points, water ripples, machine
+part states or other vertex-frame animation.
+
+The ownership model is:
+
+```text
+SceneGeometry.framesCompressed
+        │
+        ▼
+XGF v2 geometry frame tables
+        │
+        ▼
+SceneGeometry.framesCompressed after load
+
+SceneMesh.frameTime
+        │
+        ▼
+XGF v2 per-mesh frame-time table
+        │
+        ▼
+SceneMesh.frameTime after load
+```
+
+Important semantics:
+
+- A frame is a **complete replacement vertex state**, not a delta from the base
+  positions. All frames on a geometry share the same topology, indices, UVs,
+  colours and material references.
+- Frame times are authored on the geometry and must be strictly increasing.
+  The effective sample time for a mesh is
+  `geometry.framesCompressed[0].time + mesh.frameTime`.
+- Renderers resolve that sample time to the two surrounding frames, clamp before
+  the first frame and after the last frame, then interpolate positions. When
+  all frames carry normals, renderers interpolate and normalize normals as well.
+  When frames omit normals, renderers use the base/static normals when present.
+- `frameTime` is mesh-local state. Two meshes can reference the same framed
+  geometry and sample it at different times without duplicating or mutating the
+  geometry.
+- In XGF Stream, `assetLibrary` chunks own geometry frame data together with the
+  geometry, while `referencesOnly` chunks own per-mesh `frameTime`. This keeps
+  shared frame buffers reusable across many mesh instances.
+
+XGF v1 does not carry geometry frames or per-mesh frame times. Export framed
+geometry with the default XGF v2 writer.
+
+---
+
+## 6. Payload
+
+Field order = pack order = read order. See
+[`versions/v1/XGFData_v1.ts`](versions/v1/XGFData_v1.ts) and
+[`versions/v2/XGFData_v2.ts`](versions/v2/XGFData_v2.ts) for the authoritative
+TypeScript shapes. XGF v2 appends stable asset IDs, reference-only mesh fields,
+fixed-topology geometry-frame fields, per-mesh frame times and transform
+hierarchy fields to the v1-compatible payload.
+
+### Geometry (per-vertex blobs)
+
+| Entry | Type | Meaning |
+|---|---|---|
+| `positions` | `Uint16Array` | Quantised positions (R G B 16-bit per vertex). Decode against the geometry's AABB: `p = uint * (max - min) / 65535 + min`. |
+| `colors` | `Uint8Array` | Per-vertex RGBA (4 bytes/vertex). |
+| `indices` | `Uint32Array` | Triangle / line indices. |
+| `edgeIndices` | `Uint32Array` | Wireframe edge indices. |
+| `aabbs` | `Float32Array` | Per-geometry AABBs (six floats: `minX minY minZ maxX maxY maxZ`). Multiple geometries may share an AABB by pointing at the same base. |
+| `normals` | `Uint16Array` | Octahedral RG16UI normals, two values per vertex. Geometries without normals occupy zero range. |
+| `uvs` | `Float32Array` | RG32F UVs, two values per vertex. Floats (not quantised) so tiling values round-trip. |
+| `framePositions` | `Uint16Array` | Concatenated compressed positions for timed frames and untimed vertex states. Each state decodes against its own AABB. |
+| `frameNormals` | `Uint16Array` | Concatenated octahedral normals for timed frames and untimed vertex states. States without normals use `0xffffffff` in `eachFrameNormalsBase`. |
+| `frameAABBs` | `Float32Array` | Per-state AABBs, six floats per state. |
+| `frameTimes` | `Float32Array` | Strictly increasing authored frame times for timed frames. Untimed vertex states use `NaN`; animation timing lives in `SceneAnimation`. |
+
+### Per-geometry pointers
+
+`eachGeometry*` is a per-geometry array; each entry is the **base
+index** into the global blob it points to. The geometry's slice runs
+from its base to (the next geometry's base) or (the global blob's
+length).
+
+| Entry | Type | Meaning |
+|---|---|---|
+| `eachGeometryPositionsBase` | `Uint32Array` | Base into `positions`. |
+| `eachGeometryColorsBase` | `Uint32Array` | Base into `colors`. |
+| `eachGeometryIndicesBase` | `Uint32Array` | Base into `indices`. |
+| `eachGeometryEdgeIndicesBase` | `Uint32Array` | Base into `edgeIndices`. |
+| `eachGeometryNormalsBase` | `Uint32Array` | Base into `normals`, or `0xffffffff` if this geometry has no normals. |
+| `eachGeometryUVsBase` | `Uint32Array` | Base into `uvs`, or `0xffffffff` if no UVs. |
+| `eachGeometryPrimitiveType` | `Uint8Array` | `0` Triangles, `1` Solid, `2` Surface, `3` Lines, `4` Points. |
+| `eachGeometryAABBBase` | `Uint32Array` | Base into `aabbs` (multiple of 6). |
+| `eachGeometryFramesBase` | `Uint32Array` | Base into the timed-frame tables, or `0xffffffff` if the geometry has no frames. |
+| `eachGeometryFramesCount` | `Uint32Array` | Number of timed frames for each geometry. |
+| `eachGeometryVertexStatesBase` | `Uint32Array` | Base into the untimed vertex-state tables, or `0xffffffff` if the geometry has no vertex states. |
+| `eachGeometryVertexStatesCount` | `Uint32Array` | Number of untimed vertex states for each geometry. |
+| `eachFramePositionsBase` | `Uint32Array` | Base into `framePositions`. |
+| `eachFrameNormalsBase` | `Uint32Array` | Base into `frameNormals`, or `0xffffffff` if that frame has no normals. |
+| `eachFrameAABBBase` | `Uint32Array` | Base into `frameAABBs` (multiple of 6). |
+
+### Modelling matrices
+
+| Entry | Type | Meaning |
+|---|---|---|
+| `matrices` | `Float64Array` | Concatenated 4×4 column-major modelling matrices. Each mesh points at one. |
+| `eachMeshFrameTime` | `Float32Array` | Per-mesh time offset for sampling geometry frames. Zero means the first frame. This belongs to the mesh, not the shared geometry. |
+| `animationParamsJson` | `string[]` | JSON-serialized `SceneAnimationParams` records. XGF persists authored transform, vertex-state and morph-weight channels; runtime playback state is not stored. |
+
+### Material optical records
+
+XGF v2 appends `eachMaterialOptical` as an optional per-material table. When the
+entry is absent or empty, every material uses neutral optical defaults:
+
+```text
+transmission = 0
+thickness = 0
+attenuationColor = [1, 1, 1]
+attenuationDistance = Infinity
+```
+
+When present, it contains six floats per material, in material order:
+
+| Offset | Meaning |
+|---|---|
+| `+0` | `SceneMaterial.transmission`, amount of light transmission through the material. |
+| `+1` | `SceneMaterial.thickness`, characteristic/effective material volume thickness in scene units. |
+| `+2..+4` | `SceneMaterial.attenuationColor` RGB. |
+| `+5` | `SceneMaterial.attenuationDistance`; stored `0` means unlimited/no distance-based attenuation and decodes to `Infinity`. |
+
+The `0` sentinel is only an XGF serialization detail. In the scene model,
+unlimited attenuation is represented by `SceneMaterial.attenuationDistance ===
+Infinity`.
+
+### Material IOR records
+
+XGF v2 appends `eachMaterialIor` as an optional per-material table, separate
+from the optical transmission table. When the entry is absent or empty, every
+material uses the neutral/default IOR:
+
+```text
+ior = 1.5
+```
+
+When present, it contains one float per material in material order.
+
+### Textures
+
+| Entry | Type | Meaning |
+|---|---|---|
+| `textureData` | `Uint8Array` | Concatenated encoded image bytes (PNG / JPEG / GIF or opaque transcoded buffer). |
+| `eachTextureDataBase` | `Uint32Array` | Base into `textureData`. |
+| `eachTextureMediaType` | `Uint8Array` | `0` PNG, `1` JPEG, `2` GIF, `255` opaque transcoded buffer (treat as raw bytes; not decoded at load time). |
+| `eachTextureWidth` | `Uint16Array` | Per-texture pixel width. |
+| `eachTextureHeight` | `Uint16Array` | Per-texture pixel height. |
+| `eachTextureSampler` | `Uint8Array` | Five bytes per texture: `minFilter, magFilter, wrapS, wrapT, wrapR`. Each is a small-integer code (1–9) matching the `xeokit/base/constants` sampler enums. |
+| `eachTextureId` | `string[]` | Per-texture string ID (JSON blob). |
+
+### Materials
+
+| Entry | Type | Meaning |
+|---|---|---|
+| `eachMaterialPBR` | `Uint8Array` | Eight bytes per material: `R, G, B, opacity, roughness, metallic, alphaMode, alphaCutoff`. All values quantised to `[0, 255]` from `[0, 1]`. `alphaMode` is `0` OPAQUE, `1` MASK, `2` BLEND. |
+| `eachMaterialTextures` | `Int32Array` | Five entries per material: `colorTextureIndex, metallicRoughnessTextureIndex, normalsTextureIndex, occlusionTextureIndex, emissiveTextureIndex`. Each is a 0-based index into `eachTextureId`, or `-1` for "no texture". |
+| `eachMaterialId` | `string[]` | Per-material string ID (JSON blob). |
+
+### Per-mesh
+
+| Entry | Type | Meaning |
+|---|---|---|
+| `eachMeshGeometriesBase` | `Uint32Array` | Index into the geometry list (each mesh references exactly one geometry). |
+| `eachMeshMatricesBase` | `Uint32Array` | Index into `matrices` (multiple of 16). |
+| `eachMeshMaterialAttributes` | `Uint8Array` | Inline RGBA fallback (4 bytes/mesh: R, G, B, opacity). Used when `eachMeshMaterial` is `-1`. |
+| `eachMeshMaterial` | `Int32Array` | Index into the material array, or `-1` to fall back to `eachMeshMaterialAttributes`. |
+
+### Per-object
+
+| Entry | Type | Meaning |
+|---|---|---|
+| `eachObjectId` | `string[]` | Per-object string ID (JSON blob). |
+| `eachObjectMeshesBase` | `Uint32Array` | Base into the per-mesh arrays. The object's meshes run from its base to (the next object's base) or (mesh count). |
+
+A mesh with no material reference falls back to its inline RGBA (the same
+per-mesh colour the geometry-only path uses).
+
+---
+
+## 7. Load pipeline
+
+```
+   .xgf bytes (ArrayBuffer)
+        │
+        ▼
+   XGFLoader.getVersion       ←  read uint32 [0]: "1" or "2"
+        │
+        ▼
+   versions/v1|v2/parse.ts
+        │
+        ├─ unpackXGF              ←  walk the (offset, length) table,
+        │                            byte-swap on big-endian hosts,
+        │                            create typed-array views in place
+        │                            (zero copies)
+        │
+        ▼
+   XGFData_v1|v2  payload
+        │
+        ▼
+   xgfToModel              ←  walks objects → meshes → geometries
+        │
+        ├─ decode textures
+        │     PNG/JPEG/GIF → createImageBitmap → sceneModel.createTexture
+        │     opaque       → pass raw bytes through with `compressed: true`
+        │     empty        → register a 1×1 white pixel placeholder
+        │
+        ├─ build materials
+        │     PBR + alpha + texture references → sceneModel.createMaterial
+        ├─ rebuild geometry frames
+        │     frame positions/normals/AABBs/times → framesCompressed
+        │     on the owning SceneGeometry
+        │
+        ├─ for each object:
+        │     for each mesh:
+        │       ensure geometry created once → sceneModel.createGeometryCompressed
+        │           (per-vertex slices come from `eachGeometry*Base` arrays;
+        │            normals/UVs slices end at the *next* geometry with
+        │            non-sentinel base, since geometries without
+        │            normals/UVs are sparsely indexed)
+        │       resolve mesh transform from matrices[base..base+16]
+        │       resolve material or inline RGBA (unset)
+        │       restore mesh-local frameTime
+        │       sceneModel.createMesh
+        │     sceneModel.createObject({id, meshIds, layerId})
+        │     dataModel.createObject({id, type: "BasicEntity"})
+        │     dataModel.createRelationship({type: "BasicAggregation", …})
+        │
+        ▼
+   SceneModel + DataModel populated
+```
+
+### Cancellation + progress
+
+Every async-loop site calls `yieldToHost(signal)` at a coarse cadence
+(every 4 textures, every 32 objects). Two effects:
+
+- **Progress** — `options.onProgress` fires with `{phase, current,
+  total}` at the same cadence.
+- **AbortSignal** — `yieldToHost` checks `signal.aborted` and throws
+  `DOMException("Aborted", "AbortError")` on cancel. Worst-case
+  abort latency is one yield interval (≈16 ms).
+
+### Texture decoding
+
+PNG/JPEG/GIF blobs are decoded through `createImageBitmap` so the GPU
+atlas can sample them directly. Outside a browser (Node test runs,
+worker contexts without `createImageBitmap`) the loader keeps the
+encoded bytes and registers them for later browser-side decode instead
+of throwing. For pre-decoded ("opaque transcoded") textures the bytes
+pass through unchanged as a SceneTexture buffer; the runtime /
+transcoder pipeline handles upload.
+
+---
+
+## 8. Export pipeline
+
+```
+   SceneModel
+        │
+        ▼
+   modelToXGF
+        │
+        ├─ flatten geometries → concatenated positions / colors /
+        │                       indices / edge indices, build base arrays
+        ├─ flatten geometry frames → frame positions / normals /
+        │                           AABBs / times, build frame base arrays
+        ├─ flatten matrices  ← one per mesh
+        ├─ encode textures
+        │     imageBitmap → canvas.toBlob("image/png") → bytes
+        │     buffers     → passed through unchanged
+        ├─ build per-material PBR bytes + texture-index references
+        ├─ build per-mesh material index OR inline RGBA fallback
+        ├─ build per-mesh frameTime offsets
+        └─ build per-object id + mesh-base arrays
+        │
+        ▼
+   XGFData_v1|v2  payload
+        │
+        ▼
+   packXGF                  ←  positional pack; byte-swap on big-endian,
+        │                      pad each payload to its BPE alignment,
+        │                      embed JSON arrays as Uint8 blobs
+        ▼
+   .xgf bytes  (ArrayBuffer)
+```
+
+### Round-trip
+
+The `pack ↔ unpack` halves walk the same positional list in the same
+order — adding, removing, or reordering an entry is a
+schema-version-breaking change that requires bumping the version tag
+in `XGF_INFO.xgfVersion` and a matching reader.
+
+Geometry data round-trips through `createGeometryCompressed` (load
+side) and the packer (write side) without
+re-decompressing. Per-vertex positions, normals, UVs and indices are
+already quantised in the SceneModel, so the writer mostly concatenates
+buffers and emits base arrays.
+
+Geometry frames round-trip the same way: compressed frame positions and
+oct-encoded frame normals are concatenated directly into XGF v2 frame payloads.
+Changing `SceneMesh.frameTime` after load changes mesh-local sampling state; it
+does not rewrite or duplicate the geometry frame data.
+
+### Coordinate-system transform
+
+If `options.coordinateSystem` is passed to the exporter,
+`getMeshWorldMatrix` bakes the SceneModel-space → target-space
+transform into each mesh's modelling matrix before pack. The XGF
+container itself doesn't carry a coordinate-system field — the caller
+specifies it at load time via the SceneModel.
+
+### Texture encoding
+
+`imageBitmap`-backed SceneTextures are re-encoded to PNG bytes via an
+`OffscreenCanvas` (or a `<canvas>` fallback). `buffers`-backed
+SceneTextures pass through verbatim, with `mediaType: 255` flagging
+the opaque-transcoded case.
+
+---
+
+## 9. Quantisation conventions
+
+### Positions (Uint16 against per-geometry AABB)
+
+```
+   uint16 = round((double - min) * 65535 / (max - min))
+   double = uint16 * (max - min) / 65535 + min
+```
+
+Applied per axis, per geometry. The AABB ships in `aabbs` and is
+referenced by `eachGeometryAABBBase`. Multiple geometries can share
+an AABB to save space when they cover the same volume.
+
+Practical implication: keep each geometry's AABB tight to its actual
+extent. At a 1-metre AABB you get ~15 µm precision; at a 100-metre
+AABB you get ~1.5 mm.
+
+### Normals (oct-encoded Uint16 RG)
+
+Each normal is folded to the unit-octahedron's 2D parameterisation,
+then quantised to two 16-bit unsigned ints. Decoded in the vertex
+shader — the renderer's `unoctEncodedVec3` does the inverse. Cost:
+2 bytes/normal vs 12 bytes for raw float3.
+
+### UVs (Float32 RG)
+
+Floats, not quantised. Tiling values outside `[0, 1]` (e.g. for
+repeat-mapping a brick texture across a wall) need to survive intact,
+which they wouldn't through a `0..1`-clamped quantisation.
+
+---
+
+## 10. Usage
+
+### Loader
+
+```ts
+import {Scene} from "@xeokit/sdk/model/scene";
+import {Data}  from "@xeokit/sdk/model/data";
+import {XGFLoader} from "@xeokit/sdk/formats/xgf";
+
+const scene = new Scene();
+const data  = new Data();
+
+const sceneModel = scene.createModel({id: "myModel"}).value!;
+const dataModel  = data.createModel({id: "myModel"}).value!;
+
+const fileData = await (await fetch("./model.xgf")).arrayBuffer();
+
+await new XGFLoader().load({
+  fileData,
+  sceneModel,
+  dataModel,
+});
+```
+
+The loader's `fileDataType` is `"arraybuffer"`. Pass a `DataModel` to
+also receive the loader's minimal `BasicEntity` graph keyed by
+SceneObject id; omit it if you'll pair the SceneModel with a
+hand-authored DataModel from a JSON sidecar.
+
+### Exporter
+
+```ts
+import {XGFExporter} from "@xeokit/sdk/formats/xgf";
+
+const arrayBuffer = await new XGFExporter().write({
+  sceneModel,
+});
+```
+
+The exporter's `fileDataType` is `"arraybuffer"`. The `dataModel`
+parameter is accepted by the base `ModelExporter` API but XGF is a
+geometry-only format — semantic data should be written separately
+through the `datamodel` JSON exporter.
+
+### Chunked Streaming
+
+For chunked, manifest-backed loading, use
+`@xeokit/sdk/formats/xgfstream`. That format owns stream indexes, chunk
+manifests, asset-library references, dependency loading, cache policy, and
+view-prioritized streaming. Base `xgf` remains the single-file reader/writer.
+
+### Pairing with DataModel JSON
+
+The canonical streamed-model payload is **`.xgf` + `.json`** loaded
+together:
+
+```ts
+import {DataModelImporter} from "@xeokit/sdk/formats/datamodel";
+import {XGFLoader}             from "@xeokit/sdk/formats/xgf";
+
+await Promise.all([
+  new DataModelImporter().load({
+    fileData: await (await fetch("./model.json")).json(),
+    dataModel,
+  }),
+  new XGFLoader().load({
+    fileData: await (await fetch("./model.xgf")).arrayBuffer(),
+    sceneModel,
+    dataModel,  // safe to share — the XGF BasicEntity graph merges
+                // with the JSON-authored DataObjects by id
+  }),
+]);
+```
+
+---
+
+## 11. What XGF does not carry
+
+- **Runtime playback state / skinning.** XGF v2 stores authored
+  `SceneAnimation` assets for transform, vertex-state and morph-weight
+  channels, plus fixed-topology geometry frames, untimed vertex states,
+  morph targets and mesh-local morph weights. It does not store
+  `SceneAnimationPlayer` state, active playback time/speed/loop settings,
+  skeletal skins or format-specific deformer stacks.
+  Transform animation channels are persisted only when transform IDs are
+  preserved in the XGF chunk. When transforms are intentionally baked into
+  mesh matrices, mesh-targeted vertex-state and morph-weight animation
+  channels are still persisted and transform-targeted channels are omitted.
+  Asset-library chunks carry reusable assets only, so authored animation
+  assets belong in full or references-only chunks.
+- **Cameras, lights.** The format describes meshes + materials, not
+  the surrounding scene.
+- **NURBS / B-rep / parametric primitives.** Geometry must be
+  tessellated to triangles (or lines / points) before export.
+- **Section planes.** A runtime view-side concept; not in the file.
+- **Semantic structure.** DataObjects / Relationships /
+  PropertySets live in the paired DataModel JSON; XGF only carries
+  object IDs so the two halves can pair up.
+- **Coordinate system metadata.** The runtime caller specifies the
+  coordinate system via `SceneModel.coordinateSystem`; the file
+  itself is coordinate-system-agnostic.
+- **Streaming manifests or dependency fetching.** XGF v2 defines chunk
+  roles and stable references. Manifests, dependency resolution, request
+  scheduling, cache policy, and unload/garbage collection belong to the
+  streaming layer above `XGFLoader`.
+- **Pre-encoded compression layer.** No built-in zstd / draco /
+  meshopt step. Use HTTP-layer compression (gzip / brotli) for wire
+  efficiency.
+
+---
+
+## 12. File map
+
+```
+formats/xgf/
+├── README.md                              (this file)
+├── XGFLoader.ts                           ModelLoader subclass
+├── XGFExporter.ts                         ModelExporter subclass
+├── index.ts                               module re-exports
+└── versions/
+    ├── v1/
+    │   ├── XGF_INFO.ts                    {xgfVersion: 1}
+    │   ├── XGFData_v1.ts                  payload type (geometry, splats, materials, textures, triplanar)
+    │   ├── parse.ts                       load pipeline entry — unpack → xgfToModel
+    │   ├── encode.ts                      write pipeline entry — modelToXGF → pack
+    │   ├── unpackXGF.ts                   ArrayBuffer → XGFData_v1 (positional, BE-aware)
+    │   ├── packXGF.ts                     XGFData_v1 → ArrayBuffer
+    │   ├── xgfToModel.ts                  XGFData_v1 → SceneModel + DataModel
+    │   └── modelToXGF.ts                  SceneModel → XGFData_v1
+    └── v2/
+        ├── XGF_INFO.ts                    {xgfVersion: 2}
+        ├── XGFData_v2.ts                  v1-compatible payload plus stable IDs, frames, frameTime and transforms
+        ├── parse.ts                       load pipeline entry — unpack → xgfToModel
+        ├── encode.ts                      write pipeline entry — modelToXGF → pack
+        ├── unpackXGF.ts                   ArrayBuffer → XGFData_v2
+        ├── packXGF.ts                     XGFData_v2 → ArrayBuffer
+        ├── xgfToModel.ts                  XGFData_v2 → SceneModel + DataModel
+        └── modelToXGF.ts                  SceneModel → XGFData_v2
+```

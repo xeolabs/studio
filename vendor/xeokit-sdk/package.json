@@ -1,0 +1,515 @@
+{
+  "name": "@xeokit/sdk",
+  "version": "0.1.0-alpha",
+  "description": "Next generation xeokit SDK",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xeokit/sdk.git"
+  },
+  "author": "Lindsay Kay",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "dependencies": {
+    "@gltf-transform/core": "^4.1.3",
+    "@gltf-transform/extensions": "^4.1.3",
+    "@gltf-transform/functions": "^4.1.3",
+    "@loaders.gl/core": "^4.0.4",
+    "@loaders.gl/gltf": "^4.0.4",
+    "@loaders.gl/images": "^3.4.1",
+    "@loaders.gl/las": "^4.0.4",
+    "@loaders.gl/math": "^4.0.4",
+    "@loaders.gl/polyfills": "^4.0.4",
+    "@loaders.gl/textures": "^4.0.4",
+    "@napi-rs/canvas": "^1.0.1",
+    "commander": "^11.0.0",
+    "pako": "^2.0.4",
+    "strongly-typed-events": "3.0.7",
+    "tinyusdz": "^0.9.1",
+    "web-ifc": "^0.0.50",
+    "yargs": "17.7.2"
+  },
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./base": {
+      "types": "./src/base/index.ts",
+      "import": "./src/base/index.ts",
+      "default": "./src/base/index.ts"
+    },
+    "./base/constants": {
+      "types": "./src/base/constants/index.ts",
+      "import": "./src/base/constants/index.ts",
+      "default": "./src/base/constants/index.ts"
+    },
+    "./base/core": {
+      "types": "./src/base/core/index.ts",
+      "import": "./src/base/core/index.ts",
+      "default": "./src/base/core/index.ts"
+    },
+    "./base/math": {
+      "types": "./src/base/math/index.ts",
+      "import": "./src/base/math/index.ts",
+      "default": "./src/base/math/index.ts"
+    },
+    "./base/math/boundaries": {
+      "types": "./src/base/math/boundaries.ts",
+      "import": "./src/base/math/boundaries.ts",
+      "default": "./src/base/math/boundaries.ts"
+    },
+    "./base/math/compression": {
+      "types": "./src/base/math/compression.ts",
+      "import": "./src/base/math/compression.ts",
+      "default": "./src/base/math/compression.ts"
+    },
+    "./base/math/matrix": {
+      "types": "./src/base/math/matrix.ts",
+      "import": "./src/base/math/matrix.ts",
+      "default": "./src/base/math/matrix.ts"
+    },
+    "./base/math/polygon2D": {
+      "types": "./src/base/math/polygon2D.ts",
+      "import": "./src/base/math/polygon2D.ts",
+      "default": "./src/base/math/polygon2D.ts"
+    },
+    "./base/math/vector": {
+      "types": "./src/base/math/vector.ts",
+      "import": "./src/base/math/vector.ts",
+      "default": "./src/base/math/vector.ts"
+    },
+    "./base/utils": {
+      "types": "./src/base/utils/index.ts",
+      "import": "./src/base/utils/index.ts",
+      "default": "./src/base/utils/index.ts"
+    },
+    "./model": {
+      "types": "./src/model/index.ts",
+      "import": "./src/model/index.ts",
+      "default": "./src/model/index.ts"
+    },
+    "./model/data": {
+      "types": "./src/model/data/index.ts",
+      "import": "./src/model/data/index.ts",
+      "default": "./src/model/data/index.ts"
+    },
+    "./model/lod": {
+      "types": "./src/model/lod/index.ts",
+      "import": "./src/model/lod/index.ts",
+      "default": "./src/model/lod/index.ts"
+    },
+    "./model/scene": {
+      "types": "./src/model/scene/index.ts",
+      "import": "./src/model/scene/index.ts",
+      "default": "./src/model/scene/index.ts"
+    },
+    "./model/scene/variant": {
+      "types": "./src/model/scene/variant/index.ts",
+      "import": "./src/model/scene/variant/index.ts",
+      "default": "./src/model/scene/variant/index.ts"
+    },
+    "./model/scene/representation": {
+      "types": "./src/model/scene/representation/index.ts",
+      "import": "./src/model/scene/representation/index.ts",
+      "default": "./src/model/scene/representation/index.ts"
+    },
+    "./formats": {
+      "types": "./src/formats/index.ts",
+      "import": "./src/formats/index.ts",
+      "default": "./src/formats/index.ts"
+    },
+    "./formats/citygml": {
+      "types": "./src/formats/citygml/index.ts",
+      "import": "./src/formats/citygml/index.ts",
+      "default": "./src/formats/citygml/index.ts"
+    },
+    "./formats/cityjson": {
+      "types": "./src/formats/cityjson/index.ts",
+      "import": "./src/formats/cityjson/index.ts",
+      "default": "./src/formats/cityjson/index.ts"
+    },
+    "./formats/datamodel": {
+      "types": "./src/formats/datamodel/index.ts",
+      "import": "./src/formats/datamodel/index.ts",
+      "default": "./src/formats/datamodel/index.ts"
+    },
+    "./formats/dotbim": {
+      "types": "./src/formats/dotbim/index.ts",
+      "import": "./src/formats/dotbim/index.ts",
+      "default": "./src/formats/dotbim/index.ts"
+    },
+    "./formats/dwg": {
+      "types": "./src/formats/dwg/index.ts",
+      "import": "./src/formats/dwg/index.ts",
+      "default": "./src/formats/dwg/index.ts"
+    },
+    "./formats/dxf": {
+      "types": "./src/formats/dxf/index.ts",
+      "import": "./src/formats/dxf/index.ts",
+      "default": "./src/formats/dxf/index.ts"
+    },
+    "./formats/e57": {
+      "types": "./src/formats/e57/index.ts",
+      "import": "./src/formats/e57/index.ts",
+      "default": "./src/formats/e57/index.ts"
+    },
+    "./formats/fbx": {
+      "types": "./src/formats/fbx/index.ts",
+      "import": "./src/formats/fbx/index.ts",
+      "default": "./src/formats/fbx/index.ts"
+    },
+    "./formats/fds": {
+      "types": "./src/formats/fds/index.ts",
+      "import": "./src/formats/fds/index.ts",
+      "default": "./src/formats/fds/index.ts"
+    },
+    "./formats/gaussiansplat": {
+      "types": "./src/formats/gaussiansplat/index.ts",
+      "import": "./src/formats/gaussiansplat/index.ts",
+      "default": "./src/formats/gaussiansplat/index.ts"
+    },
+    "./formats/gltf": {
+      "types": "./src/formats/gltf/index.ts",
+      "import": "./src/formats/gltf/index.ts",
+      "default": "./src/formats/gltf/index.ts"
+    },
+    "./formats/geojson": {
+      "types": "./src/formats/geojson/index.ts",
+      "import": "./src/formats/geojson/index.ts",
+      "default": "./src/formats/geojson/index.ts"
+    },
+    "./formats/ifc": {
+      "types": "./src/formats/ifc/index.ts",
+      "import": "./src/formats/ifc/index.ts",
+      "default": "./src/formats/ifc/index.ts"
+    },
+    "./formats/las": {
+      "types": "./src/formats/las/index.ts",
+      "import": "./src/formats/las/index.ts",
+      "default": "./src/formats/las/index.ts"
+    },
+    "./formats/mtl": {
+      "types": "./src/formats/mtl/index.ts",
+      "import": "./src/formats/mtl/index.ts",
+      "default": "./src/formats/mtl/index.ts"
+    },
+    "./formats/obj": {
+      "types": "./src/formats/obj/index.ts",
+      "import": "./src/formats/obj/index.ts",
+      "default": "./src/formats/obj/index.ts"
+    },
+    "./formats/pdf": {
+      "types": "./src/formats/pdf/index.ts",
+      "import": "./src/formats/pdf/index.ts",
+      "default": "./src/formats/pdf/index.ts"
+    },
+    "./formats/stl": {
+      "types": "./src/formats/stl/index.ts",
+      "import": "./src/formats/stl/index.ts",
+      "default": "./src/formats/stl/index.ts"
+    },
+    "./formats/landxml": {
+      "types": "./src/formats/landxml/index.ts",
+      "import": "./src/formats/landxml/index.ts",
+      "default": "./src/formats/landxml/index.ts"
+    },
+    "./formats/ply": {
+      "types": "./src/formats/ply/index.ts",
+      "import": "./src/formats/ply/index.ts",
+      "default": "./src/formats/ply/index.ts"
+    },
+    "./formats/scenemodel": {
+      "types": "./src/formats/scenemodel/index.ts",
+      "import": "./src/formats/scenemodel/index.ts",
+      "default": "./src/formats/scenemodel/index.ts"
+    },
+    "./formats/collada": {
+      "types": "./src/formats/collada/index.ts",
+      "import": "./src/formats/collada/index.ts",
+      "default": "./src/formats/collada/index.ts"
+    },
+    "./formats/svg": {
+      "types": "./src/formats/svg/index.ts",
+      "import": "./src/formats/svg/index.ts",
+      "default": "./src/formats/svg/index.ts"
+    },
+    "./formats/threedtiles": {
+      "types": "./src/formats/threedtiles/index.ts",
+      "import": "./src/formats/threedtiles/index.ts",
+      "default": "./src/formats/threedtiles/index.ts"
+    },
+    "./formats/threedxml": {
+      "types": "./src/formats/threedxml/index.ts",
+      "import": "./src/formats/threedxml/index.ts",
+      "default": "./src/formats/threedxml/index.ts"
+    },
+    "./formats/usdz": {
+      "types": "./src/formats/usdz/index.ts",
+      "import": "./src/formats/usdz/index.ts",
+      "default": "./src/formats/usdz/index.ts"
+    },
+    "./formats/xgf": {
+      "types": "./src/formats/xgf/index.ts",
+      "import": "./src/formats/xgf/index.ts",
+      "default": "./src/formats/xgf/index.ts"
+    },
+    "./formats/xgfstream": {
+      "types": "./src/formats/xgfstream/index.ts",
+      "import": "./src/formats/xgfstream/index.ts",
+      "default": "./src/formats/xgfstream/index.ts"
+    },
+    "./quality": {
+      "types": "./src/quality/index.ts",
+      "import": "./src/quality/index.ts",
+      "default": "./src/quality/index.ts"
+    },
+    "./interop": {
+      "types": "./src/interop/index.ts",
+      "import": "./src/interop/index.ts",
+      "default": "./src/interop/index.ts"
+    },
+    "./interop/bcf": {
+      "types": "./src/interop/bcf/index.ts",
+      "import": "./src/interop/bcf/index.ts",
+      "default": "./src/interop/bcf/index.ts"
+    },
+    "./spatial": {
+      "types": "./src/spatial/index.ts",
+      "import": "./src/spatial/index.ts",
+      "default": "./src/spatial/index.ts"
+    },
+    "./spatial/collision": {
+      "types": "./src/spatial/collision/index.ts",
+      "import": "./src/spatial/collision/index.ts",
+      "default": "./src/spatial/collision/index.ts"
+    },
+    "./spatial/picking": {
+      "types": "./src/spatial/picking/index.ts",
+      "import": "./src/spatial/picking/index.ts",
+      "default": "./src/spatial/picking/index.ts"
+    },
+    "./tools": {
+      "types": "./src/tools/index.ts",
+      "import": "./src/tools/index.ts",
+      "default": "./src/tools/index.ts"
+    },
+    "./viewing": {
+      "types": "./src/viewing/index.ts",
+      "import": "./src/viewing/index.ts",
+      "default": "./src/viewing/index.ts"
+    },
+    "./viewing/adaptiveQuality": {
+      "types": "./src/viewing/adaptiveQuality/index.ts",
+      "import": "./src/viewing/adaptiveQuality/index.ts",
+      "default": "./src/viewing/adaptiveQuality/index.ts"
+    },
+    "./viewing/cameraFlight": {
+      "types": "./src/viewing/cameraFlight/index.ts",
+      "import": "./src/viewing/cameraFlight/index.ts",
+      "default": "./src/viewing/cameraFlight/index.ts"
+    },
+    "./viewing/lod": {
+      "types": "./src/viewing/lod/index.ts",
+      "import": "./src/viewing/lod/index.ts",
+      "default": "./src/viewing/lod/index.ts"
+    },
+    "./viewing/navigation": {
+      "types": "./src/viewing/navigation/index.ts",
+      "import": "./src/viewing/navigation/index.ts",
+      "default": "./src/viewing/navigation/index.ts"
+    },
+    "./viewing/navigation/globe": {
+      "types": "./src/viewing/navigation/globe/index.ts",
+      "import": "./src/viewing/navigation/globe/index.ts",
+      "default": "./src/viewing/navigation/globe/index.ts"
+    },
+    "./viewing/navigation/model": {
+      "types": "./src/viewing/navigation/model/index.ts",
+      "import": "./src/viewing/navigation/model/index.ts",
+      "default": "./src/viewing/navigation/model/index.ts"
+    },
+    "./viewing/navigation/vehicle": {
+      "types": "./src/viewing/navigation/vehicle/index.ts",
+      "import": "./src/viewing/navigation/vehicle/index.ts",
+      "default": "./src/viewing/navigation/vehicle/index.ts"
+    },
+    "./viewing/navigation/walk": {
+      "types": "./src/viewing/navigation/walk/index.ts",
+      "import": "./src/viewing/navigation/walk/index.ts",
+      "default": "./src/viewing/navigation/walk/index.ts"
+    },
+    "./viewing/transformControls": {
+      "types": "./src/viewing/transformControls/index.ts",
+      "import": "./src/viewing/transformControls/index.ts",
+      "default": "./src/viewing/transformControls/index.ts"
+    },
+    "./viewing/viewer": {
+      "types": "./src/viewing/viewer/index.ts",
+      "import": "./src/viewing/viewer/index.ts",
+      "default": "./src/viewing/viewer/index.ts"
+    },
+    "./viewing/profiles": {
+      "types": "./src/viewing/profiles/index.ts",
+      "import": "./src/viewing/profiles/index.ts",
+      "default": "./src/viewing/profiles/index.ts"
+    },
+    "./viewing/renderers/webGL": {
+      "types": "./src/viewing/renderers/webGL/index.ts",
+      "import": "./src/viewing/renderers/webGL/index.ts",
+      "default": "./src/viewing/renderers/webGL/index.ts"
+    },
+    "./viewing/renderers/webGL/plugins": {
+      "types": "./src/viewing/renderers/webGL/plugins/index.ts",
+      "import": "./src/viewing/renderers/webGL/plugins/index.ts",
+      "default": "./src/viewing/renderers/webGL/plugins/index.ts"
+    },
+    "./viewing/renderers/webGPU/plugins": {
+      "types": "./src/viewing/renderers/webGPU/plugins/index.ts",
+      "import": "./src/viewing/renderers/webGPU/plugins/index.ts",
+      "default": "./src/viewing/renderers/webGPU/plugins/index.ts"
+    },
+    "./viewing/renderers/webGPU": {
+      "types": "./src/viewing/renderers/webGPU/index.ts",
+      "import": "./src/viewing/renderers/webGPU/index.ts",
+      "default": "./src/viewing/renderers/webGPU/index.ts"
+    },
+    "./conversion": {
+      "types": "./src/conversion/index.ts",
+      "import": "./src/conversion/index.ts",
+      "default": "./src/conversion/index.ts"
+    },
+    "./package.tson": "./package.tson",
+    "./model/generation": {
+      "types": "./src/model/generation/index.ts",
+      "import": "./src/model/generation/index.ts",
+      "default": "./src/model/generation/index.ts"
+    },
+    "./model/generation/paintMaterials": {
+      "types": "./src/model/generation/paintMaterials/index.ts",
+      "import": "./src/model/generation/paintMaterials/index.ts",
+      "default": "./src/model/generation/paintMaterials/index.ts"
+    },
+    "./quality/sceneModel": {
+      "types": "./src/quality/sceneModel/index.ts",
+      "import": "./src/quality/sceneModel/index.ts",
+      "default": "./src/quality/sceneModel/index.ts"
+    },
+    "./quality/dataModel": {
+      "types": "./src/quality/dataModel/index.ts",
+      "import": "./src/quality/dataModel/index.ts",
+      "default": "./src/quality/dataModel/index.ts"
+    },
+    "./tools/measurement/angle": {
+      "types": "./src/tools/measurement/angle/index.ts",
+      "import": "./src/tools/measurement/angle/index.ts",
+      "default": "./src/tools/measurement/angle/index.ts"
+    },
+    "./tools/measurement/distance": {
+      "types": "./src/tools/measurement/distance/index.ts",
+      "import": "./src/tools/measurement/distance/index.ts",
+      "default": "./src/tools/measurement/distance/index.ts"
+    },
+    "./viewing/rendering": {
+      "types": "./src/viewing/rendering/index.ts",
+      "import": "./src/viewing/rendering/index.ts",
+      "default": "./src/viewing/rendering/index.ts"
+    },
+    "./viewing/rendering/plugins": {
+      "types": "./src/viewing/rendering/plugins/index.ts",
+      "import": "./src/viewing/rendering/plugins/index.ts",
+      "default": "./src/viewing/rendering/plugins/index.ts"
+    },
+    "./model/generation/buildGeometry": {
+      "types": "./src/model/generation/buildGeometry/index.ts",
+      "import": "./src/model/generation/buildGeometry/index.ts",
+      "default": "./src/model/generation/buildGeometry/index.ts"
+    },
+    "./model/generation/paintEnvironments": {
+      "types": "./src/model/generation/paintEnvironments/index.ts",
+      "import": "./src/model/generation/paintEnvironments/index.ts",
+      "default": "./src/model/generation/paintEnvironments/index.ts"
+    },
+    "./model/generation/treeGenerator": {
+      "types": "./src/model/generation/treeGenerator/index.ts",
+      "import": "./src/model/generation/treeGenerator/index.ts",
+      "default": "./src/model/generation/treeGenerator/index.ts"
+    },
+    "./model/generation/buildGeometry/*": {
+      "types": "./src/model/generation/buildGeometry/*.ts",
+      "import": "./src/model/generation/buildGeometry/*.ts",
+      "default": "./src/model/generation/buildGeometry/*.ts"
+    },
+    "./model/generation/paintEnvironments/*": {
+      "types": "./src/model/generation/paintEnvironments/*.ts",
+      "import": "./src/model/generation/paintEnvironments/*.ts",
+      "default": "./src/model/generation/paintEnvironments/*.ts"
+    },
+    "./model/generation/paintMaterials/*": {
+      "types": "./src/model/generation/paintMaterials/*.ts",
+      "import": "./src/model/generation/paintMaterials/*.ts",
+      "default": "./src/model/generation/paintMaterials/*.ts"
+    },
+    "./model/generation/treeGenerator/*": {
+      "types": "./src/model/generation/treeGenerator/*.ts",
+      "import": "./src/model/generation/treeGenerator/*.ts",
+      "default": "./src/model/generation/treeGenerator/*.ts"
+    },
+    "./quality/dataModel/*": {
+      "types": "./src/quality/dataModel/*.ts",
+      "import": "./src/quality/dataModel/*.ts",
+      "default": "./src/quality/dataModel/*.ts"
+    },
+    "./quality/sceneModel/*": {
+      "types": "./src/quality/sceneModel/*.ts",
+      "import": "./src/quality/sceneModel/*.ts",
+      "default": "./src/quality/sceneModel/*.ts"
+    },
+    "./tools/measurement/angle/*": {
+      "types": "./src/tools/measurement/angle/*.ts",
+      "import": "./src/tools/measurement/angle/*.ts",
+      "default": "./src/tools/measurement/angle/*.ts"
+    },
+    "./tools/measurement/distance/*": {
+      "types": "./src/tools/measurement/distance/*.ts",
+      "import": "./src/tools/measurement/distance/*.ts",
+      "default": "./src/tools/measurement/distance/*.ts"
+    },
+    "./conversion/pipeline": {
+      "types": "./src/conversion/pipeline/index.ts",
+      "import": "./src/conversion/pipeline/index.ts",
+      "default": "./src/conversion/pipeline/index.ts"
+    },
+    "./conversion/xeoconvert": {
+      "types": "./src/conversion/xeoconvert/index.ts",
+      "import": "./src/conversion/xeoconvert/index.ts",
+      "default": "./src/conversion/xeoconvert/index.ts"
+    },
+    "./conversion/pipeline/*": {
+      "types": "./src/conversion/pipeline/*.ts",
+      "import": "./src/conversion/pipeline/*.ts",
+      "default": "./src/conversion/pipeline/*.ts"
+    },
+    "./conversion/xeoconvert/*": {
+      "types": "./src/conversion/xeoconvert/*.ts",
+      "import": "./src/conversion/xeoconvert/*.ts",
+      "default": "./src/conversion/xeoconvert/*.ts"
+    },
+    "./viewing/renderers": {
+      "types": "./src/viewing/renderers/index.ts",
+      "import": "./src/viewing/renderers/index.ts",
+      "default": "./src/viewing/renderers/index.ts"
+    },
+    "./viewing/renderers/webGL/*": {
+      "types": "./src/viewing/renderers/webGL/*.ts",
+      "import": "./src/viewing/renderers/webGL/*.ts",
+      "default": "./src/viewing/renderers/webGL/*.ts"
+    },
+    "./viewing/renderers/webGPU/*": {
+      "types": "./src/viewing/renderers/webGPU/*.ts",
+      "import": "./src/viewing/renderers/webGPU/*.ts",
+      "default": "./src/viewing/renderers/webGPU/*.ts"
+    }
+  }
+}

@@ -1,0 +1,367 @@
+        .right-panel {
+            min-width: 0;
+            min-height: 0;
+            display: grid;
+            grid-template-rows: auto auto minmax(0, 1fr);
+            border-left: 1px solid #cfd6df;
+            background: #f7f9fb;
+            overflow: hidden;
+        }
+
+        .right-panel[data-collapsed="true"] {
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .right-panel-header {
+            min-width: 0;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 24px minmax(0, 1fr);
+            gap: 4px 8px;
+            align-items: start;
+            padding: 10px 12px;
+            border-bottom: 1px solid #dbe1e8;
+            background: #ffffff;
+        }
+
+        .right-panel-kicker,
+        .right-panel-header h1,
+        .right-panel-header p {
+            grid-column: 2;
+            min-width: 0;
+        }
+
+        .right-panel-kicker {
+            color: #2367c7;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0;
+            text-transform: uppercase;
+        }
+
+        .right-panel-header h1 {
+            margin: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #1f2c3a;
+            font-size: 15px;
+            line-height: 1.2;
+        }
+
+        .right-panel-header p {
+            margin: 0;
+            color: #697482;
+            font-size: 11px;
+            line-height: 1.35;
+        }
+
+        .right-panel-body {
+            min-width: 0;
+            min-height: 0;
+            overflow: auto;
+            padding: 12px;
+            color: #33404d;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .right-panel-body h2 {
+            margin: 0 0 8px;
+            color: #1f2c3a;
+            font-size: 13px;
+            line-height: 1.2;
+        }
+
+        .right-panel-body p {
+            margin: 0;
+        }
+
+        .inspector-panel {
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: auto;
+            background: var(--studio-panel-bg, #f7f9fb);
+            color: #263443;
+        }
+
+        .inspector-panel-header {
+            display: grid;
+            gap: 3px;
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.34);
+            background: rgba(255, 255, 255, 0.78);
+        }
+
+        .inspector-kicker {
+            color: #2367c7;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0;
+            text-transform: uppercase;
+        }
+
+        .inspector-panel-header h1 {
+            margin: 0;
+            overflow: hidden;
+            color: #172334;
+            font-size: 15px;
+            line-height: 1.2;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .inspector-panel-header p {
+            margin: 0;
+            overflow: hidden;
+            color: #607083;
+            font-size: 12px;
+            line-height: 1.35;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .inspector-header-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding-top: 5px;
+        }
+
+        .inspector-tabs {
+            display: flex;
+            gap: 1px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.28);
+            background: rgba(148, 163, 184, 0.18);
+        }
+
+        .inspector-tabs button {
+            min-width: 0;
+            height: 28px;
+            padding: 0 12px;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            background: rgba(255, 255, 255, 0.86);
+            color: #607083;
+            font: 700 12px system-ui, sans-serif;
+            cursor: pointer;
+        }
+
+        .inspector-tabs button:hover {
+            background: #ffffff;
+            color: #263443;
+        }
+
+        .inspector-tabs button[data-active="true"] {
+            border-bottom-color: #2563eb;
+            background: #ffffff;
+            color: #172334;
+        }
+
+        .inspector-link-strip {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 1px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.28);
+            background: rgba(148, 163, 184, 0.20);
+        }
+
+        .inspector-link-strip article {
+            min-width: 0;
+            display: grid;
+            gap: 2px;
+            padding: 8px 10px;
+            background: #ffffff;
+        }
+
+        .inspector-link-strip article[data-state="missing"] {
+            background: #fff7ed;
+        }
+
+        .inspector-link-button {
+            border: 0;
+            padding: 0;
+            background: transparent;
+            color: #2367c7;
+            font: 600 12px system-ui, sans-serif;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .inspector-link-button:hover { text-decoration: underline; }
+
+        .inspector-link-strip strong {
+            overflow: hidden;
+            color: #4b5f76;
+            font-size: 10px;
+            font-weight: 800;
+            text-overflow: ellipsis;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .inspector-link-strip span {
+            overflow: hidden;
+            color: #172334;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 11px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .inspector-section {
+            display: grid;
+            gap: 8px;
+            padding: 12px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+        }
+
+        .inspector-section h2 {
+            margin: 0;
+            color: #172334;
+            font-size: 13px;
+            line-height: 1.2;
+        }
+
+        .inspector-property-list {
+            display: grid;
+            grid-template-columns: minmax(96px, 0.45fr) minmax(0, 1fr);
+            gap: 1px;
+            margin: 0;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            background: rgba(148, 163, 184, 0.18);
+        }
+
+        .inspector-property-list dt,
+        .inspector-property-list dd {
+            min-width: 0;
+            margin: 0;
+            padding: 6px 8px;
+            background: rgba(255, 255, 255, 0.9);
+            font-size: 12px;
+            line-height: 1.35;
+        }
+
+        .inspector-property-list dt {
+            color: #5b6f84;
+            font-weight: 700;
+        }
+
+        .inspector-property-list dd {
+            overflow: hidden;
+            color: #172334;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .inspector-property-list--mono dd {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 11px;
+        }
+
+        .inspector-property-table {
+            display: grid;
+            gap: 1px;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            background: rgba(148, 163, 184, 0.18);
+        }
+
+        .inspector-property-table article {
+            min-width: 0;
+            display: grid;
+            grid-template-columns: minmax(76px, 0.32fr) minmax(92px, 0.38fr) minmax(0, 1fr);
+            background: rgba(255, 255, 255, 0.92);
+        }
+
+        .inspector-property-table span {
+            min-width: 0;
+            overflow: hidden;
+            padding: 6px 8px;
+            color: #172334;
+            font-size: 12px;
+            line-height: 1.35;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .inspector-property-set {
+            color: #607083 !important;
+        }
+
+        .inspector-property-name {
+            font-weight: 700;
+        }
+
+        .inspector-property-value {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 11px !important;
+        }
+
+        .inspector-action-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .inspector-runtime-table {
+            display: grid;
+            gap: 1px;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            background: rgba(148, 163, 184, 0.18);
+        }
+
+        .inspector-runtime-table article {
+            min-width: 0;
+            display: grid;
+            grid-template-columns: minmax(92px, 1fr) repeat(4, minmax(62px, 0.7fr));
+            gap: 1px;
+            background: rgba(255, 255, 255, 0.92);
+        }
+
+        .inspector-runtime-table strong,
+        .inspector-runtime-table span {
+            min-width: 0;
+            overflow: hidden;
+            padding: 6px 8px;
+            color: #172334;
+            font-size: 11px;
+            line-height: 1.35;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .inspector-runtime-table strong {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
+
+        .inspector-runtime-table span {
+            color: #607083;
+        }
+
+        .inspector-json-section {
+            min-height: 0;
+        }
+
+        .inspector-json-section pre {
+            min-width: 0;
+            max-height: none;
+            margin: 0;
+            overflow: auto;
+            padding: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            border-radius: 4px;
+            background: #0f172a;
+            color: #dbeafe;
+            font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            white-space: pre;
+        }
+
+        .inspector-empty {
+            margin: 0;
+            padding: 12px;
+            color: #607083;
+            font-size: 12px;
+        }

@@ -1,0 +1,694 @@
+/**
+ * Parses a binary FBX document into a {@link model!scene.SceneModel | SceneModel}.
+ *
+ * v1 scope: mesh geometry (control points + polygon triangulation, per-vertex
+ * normals and UVs), each `Model`'s local transform (`Lcl Translation /
+ * Rotation / Scaling`), basic diffuse `Material` colour/opacity, and embedded
+ * diffuse textures (image bytes carried in a connected `Video`'s `Content`). The
+ * Geometry↔Model↔Material↔Texture linking comes from the FBX `Connections` graph.
+ *
+ * Not handled (yet): ASCII FBX, animation, skinning / deformers including
+ * blend-shape channels, NURBS, external-file textures (`RelativeFilename` with
+ * no embedded data — needs a base URL the parser isn't given), non-colour
+ * texture slots, and the full pivot / pre-post-rotation transform chain (only
+ * TRS is applied). Geometry is emitted expanded (non-indexed) per triangle
+ * corner — simple and correct; vertex sharing is a later optimisation.
+ *
+ * @internal
+ */
+import {LinearFilter, TrianglesPrimitive} from "../../../../base/constants";
+import {eulerToQuat} from "../../../../base/math/quat";
+import type {ModelParseParams} from "../../../ModelParseParams";
+import {readFBXBinary} from "../../fbxBinaryReader";
+import {findChild, type FBXNode} from "../../FBXNode";
+
+const DEG2RAD = Math.PI / 180;
+const FBX_TIME_TICKS_PER_SECOND = 46186158000;
+
+export async function parse(params: ModelParseParams, options?: any): Promise<void> {
+  const sceneModel = params.sceneModel;
+  if (!sceneModel) {
+    return;
+  }
+  const ignoreNormals = options?.ignoreNormals === true;
+  const ignoreUVs = options?.ignoreUVs === true;
+
+  const root = readFBXBinary(params.fileData as ArrayBuffer);
+  const objectsNode = findChild(root, "Objects");
+  if (!objectsNode) {
+    console.warn("[FBXLoader] No Objects node — nothing to load.");
+    return;
+  }
+  const connectionsNode = findChild(root, "Connections");
+
+  // Index the typed objects by their FBX id (the first property).
+  const geometries = new Map<number, FBXNode>();
+  const models = new Map<number, FBXNode>();
+  const materials = new Map<number, FBXNode>();
+  const textures = new Map<number, FBXNode>();
+  const videos = new Map<number, FBXNode>();        // embedded media (Content bytes)
+  const animationStacks = new Map<number, FBXNode>();
+  const animationCurves = new Map<number, FBXNode>();
+  const animationCurveNodes = new Map<number, FBXNode>();
+  for (const child of objectsNode.children) {
+    const id = child.props[0] as number;
+    if (child.name === "Geometry") geometries.set(id, child);
+    else if (child.name === "Model") models.set(id, child);
+    else if (child.name === "Material") materials.set(id, child);
+    else if (child.name === "Texture") textures.set(id, child);
+    else if (child.name === "Video") videos.set(id, child);
+    else if (child.name === "AnimationStack") animationStacks.set(id, child);
+    else if (child.name === "AnimationCurve") animationCurves.set(id, child);
+    else if (child.name === "AnimationCurveNode") animationCurveNodes.set(id, child);
+  }
+
+  // Connection graph: parentId -> [{id, prop}, ...]. Each `C` is
+  // [relType, childId, parentId, (propName)]; `OP` connections (e.g. a Texture
+  // into a Material's "DiffuseColor") carry the property name as a 4th field.
+  const childrenOf = new Map<number, Array<{id: number; prop: string | null}>>();
+  const parentsOf = new Map<number, Array<{id: number; prop: string | null}>>();
+  if (connectionsNode) {
+    for (const c of connectionsNode.children) {
+      if (c.name !== "C") continue;
+      const childId = c.props[1] as number;
+      const parentId = c.props[2] as number;
+      const prop = (c.props[0] === "OP" && c.props.length > 3) ? String(c.props[3]) : null;
+      let arr = childrenOf.get(parentId);
+      if (!arr) childrenOf.set(parentId, arr = []);
+      arr.push({id: childId, prop});
+      let parents = parentsOf.get(childId);
+      if (!parents) parentsOf.set(childId, parents = []);
+      parents.push({id: parentId, prop});
+    }
+  }
+
+  const emittedGeom = new Map<number, string>();    // fbx geom id -> SceneModel geometry id
+  const emittedMat = new Map<number, string>();     // fbx material id -> SceneModel material id
+  const emittedTex = new Map<number, string>();     // fbx texture id -> SceneModel texture id
+  const usedObjectIds = new Set<string>();
+  let emitted = 0, geomFails = 0, meshFails = 0;
+
+  // Decode embedded diffuse textures up front, concurrently. createImageBitmap
+  // runs off the main thread, so issuing several at once decodes them in
+  // parallel rather than one-per-material in the loop below — which then just
+  // looks each up by id.
+  await predecodeDiffuseTextures(materials, childrenOf, textures, videos, sceneModel, emittedTex);
+
+  const modelTransformIds = emitModelTransforms(sceneModel, models, parentsOf);
+
+  for (const [modelId, modelNode] of models) {
+    const children = childrenOf.get(modelId) || [];
+    let geomId: number | null = null;
+    let matId: number | null = null;
+    for (const {id: cid} of children) {
+      if (geometries.has(cid)) geomId = cid;
+      else if (materials.has(cid)) matId = cid;
+    }
+    if (geomId === null) {
+      continue;   // a non-mesh Model (camera, light, null/group) — skip
+    }
+
+    // Geometry — created once per FBX geometry, shared across instancing Models.
+    let geometryId = emittedGeom.get(geomId);
+    if (geometryId === undefined) {
+      const geo = extractGeometry(geometries.get(geomId)!);
+      if (!geo) continue;
+      geometryId = `fbx-geom-${geomId}`;
+      const gr = sceneModel.createGeometry({
+        id: geometryId,
+        primitive: TrianglesPrimitive,
+        positions: geo.positions,
+        normals: ignoreNormals ? undefined : geo.normals,
+        uvs: ignoreUVs ? undefined : geo.uvs,
+        indices: geo.indices,
+      });
+      if ((gr as any).ok === false) {
+        if (++geomFails <= 3) console.warn("[FBXLoader] createGeometry failed:", (gr as any).error);
+        continue;
+      }
+      emittedGeom.set(geomId, geometryId);
+    }
+
+    // Material — basic diffuse colour, created once per FBX material.
+    let materialId: string | undefined;
+    if (matId !== null) {
+      materialId = emittedMat.get(matId);
+      if (materialId === undefined) {
+        const id = `fbx-mat-${matId}`;
+        const matNode = materials.get(matId)!;
+        const colorTextureId = emitDiffuseTexture(matId, childrenOf, textures, emittedTex);
+        const opacity = extractOpacity(matNode);
+        const mr = sceneModel.createMaterial({
+          id,
+          color: extractDiffuse(matNode),
+          opacity,
+          alphaMode: opacity < 0.999 ? "BLEND" : "OPAQUE",
+          colorTextureId,
+        });
+        if ((mr as any).ok === false) {
+          materialId = undefined;
+        } else {
+          materialId = id;
+          emittedMat.set(matId, id);
+        }
+      }
+    }
+
+    const meshId = `fbx-mesh-${modelId}`;
+    const mr = sceneModel.createMesh({
+      id: meshId,
+      geometryId,
+      materialId,
+      parentTransformId: modelTransformIds.get(modelId),
+    });
+    if ((mr as any).ok === false) {
+      if (++meshFails <= 3) console.warn("[FBXLoader] createMesh failed:", (mr as any).error);
+      continue;
+    }
+
+    sceneModel.createObject({id: modelObjectId(modelNode, modelId, usedObjectIds), meshIds: [meshId]});
+    emitted++;
+  }
+
+  if (emitted === 0) {
+    console.warn("[FBXLoader] No mesh models were emitted from the FBX.");
+  }
+  emitAnimations(sceneModel, animationStacks, animationCurves, animationCurveNodes, models, childrenOf, parentsOf, modelTransformIds);
+}
+
+
+// ── Geometry extraction ───────────────────────────────────────────
+
+interface ExtractedGeometry {
+  positions: Float32Array<any>;
+  normals?: Float32Array<any>;
+  uvs?: Float32Array<any>;
+  indices: Uint32Array<any>;
+}
+
+function extractGeometry(geomNode: FBXNode): ExtractedGeometry | null {
+  const verts = arrayProp(findChild(geomNode, "Vertices"));
+  const polys = arrayProp(findChild(geomNode, "PolygonVertexIndex"));
+  if (!verts || !polys || verts.length === 0 || polys.length === 0) {
+    return null;
+  }
+
+  const normLayer = readLayer(geomNode, "LayerElementNormal", "Normals", "NormalsIndex");
+  const uvLayer = readLayer(geomNode, "LayerElementUV", "UV", "UVIndex");
+
+  const positions: number[] = [];
+  const normals: number[] | null = normLayer ? [] : null;
+  const uvs: number[] | null = uvLayer ? [] : null;
+
+  // Walk each polygon (a negative index marks its last corner), fan-triangulate,
+  // and emit expanded corners.
+  let i = 0;
+  while (i < polys.length) {
+    const corners: Array<{cp: number; pvi: number}> = [];
+    let j = i;
+    for (; j < polys.length; j++) {
+      const raw = polys[j];
+      const cp = raw < 0 ? (-raw - 1) : raw;
+      corners.push({cp, pvi: j});
+      if (raw < 0) { j++; break; }
+    }
+    for (let k = 1; k + 1 < corners.length; k++) {
+      for (const c of [corners[0], corners[k], corners[k + 1]]) {
+        positions.push(verts[c.cp * 3], verts[c.cp * 3 + 1], verts[c.cp * 3 + 2]);
+        if (normals) {
+          const nrm = lookupVec(normLayer!, c.pvi, c.cp, 3) || [0, 0, 1];
+          normals.push(nrm[0], nrm[1], nrm[2]);
+        }
+        if (uvs) {
+          const uv = lookupVec(uvLayer!, c.pvi, c.cp, 2) || [0, 0];
+          uvs.push(uv[0], uv[1]);
+        }
+      }
+    }
+    i = j;
+  }
+
+  const count = positions.length / 3;
+  if (count === 0) {
+    return null;
+  }
+  const indices = new Uint32Array(count);
+  for (let k = 0; k < count; k++) indices[k] = k;
+
+  return {
+    positions: new Float32Array(positions),
+    normals: normals ? new Float32Array(normals) : undefined,
+    uvs: uvs ? new Float32Array(uvs) : undefined,
+    indices,
+  };
+}
+
+interface Layer {
+  data: ArrayLike<number>;
+  mapping: string;
+  reference: string;
+  index: ArrayLike<number> | null;
+}
+
+function readLayer(geomNode: FBXNode, layerName: string, dataName: string, indexName: string): Layer | null {
+  const layer = findChild(geomNode, layerName);
+  if (!layer) return null;
+  const data = arrayProp(findChild(layer, dataName));
+  if (!data) return null;
+  return {
+    data,
+    mapping: String(scalarProp(findChild(layer, "MappingInformationType")) ?? "ByPolygonVertex"),
+    reference: String(scalarProp(findChild(layer, "ReferenceInformationType")) ?? "Direct"),
+    index: arrayProp(findChild(layer, indexName)),
+  };
+}
+
+function lookupVec(layer: Layer, pvi: number, cp: number, size: number): number[] | null {
+  let i: number;
+  const m = layer.mapping;
+  if (m === "ByControlPoint" || m === "ByVertex" || m === "ByVertice") i = cp;
+  else if (m === "AllSame") i = 0;
+  else i = pvi;   // ByPolygonVertex (FBX default)
+  if ((layer.reference === "IndexToDirect" || layer.reference === "Index") && layer.index) {
+    i = layer.index[i];
+  }
+  const out: number[] = new Array(size);
+  for (let k = 0; k < size; k++) out[k] = layer.data[i * size + k];
+  return out;
+}
+
+
+// ── Transform & material ──────────────────────────────────────────
+
+function extractModelMatrix(modelNode: FBXNode): Float64Array<any> {
+  const t = prop70(modelNode, "Lcl Translation") || [0, 0, 0];
+  const r = prop70(modelNode, "Lcl Rotation") || [0, 0, 0];
+  const s = prop70(modelNode, "Lcl Scaling") || [1, 1, 1];
+  return composeTRS(
+    t[0] || 0, t[1] || 0, t[2] || 0,
+    (r[0] || 0) * DEG2RAD, (r[1] || 0) * DEG2RAD, (r[2] || 0) * DEG2RAD,
+    s[0] ?? 1, s[1] ?? 1, s[2] ?? 1,
+  );
+}
+
+function emitModelTransforms(
+  sceneModel: any,
+  models: Map<number, FBXNode>,
+  parentsOf: Map<number, Array<{id: number; prop: string | null}>>,
+): Map<number, string> {
+  const emitted = new Map<number, string>();
+  const visiting = new Set<number>();
+
+  const emitOne = (modelId: number): string | undefined => {
+    const existing = emitted.get(modelId);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const modelNode = models.get(modelId);
+    if (!modelNode || visiting.has(modelId)) {
+      return undefined;
+    }
+    visiting.add(modelId);
+    const transformId = `fbx-transform-${modelId}`;
+    const parentModelId = (parentsOf.get(modelId) || []).find((parent) => models.has(parent.id))?.id;
+    const parentTransformId = parentModelId !== undefined ? emitOne(parentModelId) : undefined;
+    const result = sceneModel.createTransform({
+      id: transformId,
+      matrix: extractModelMatrix(modelNode),
+      ...(parentTransformId ? {parentTransformId} : {}),
+    });
+    visiting.delete(modelId);
+    if (result && result.ok === false) {
+      console.warn("[FBXLoader] createTransform failed:", result.error);
+      return undefined;
+    }
+    emitted.set(modelId, transformId);
+    return transformId;
+  };
+
+  for (const modelId of models.keys()) {
+    emitOne(modelId);
+  }
+  return emitted;
+}
+
+/**
+ * Column-major 4×4 from translation, Euler rotation (radians, XYZ order), and
+ * scale: `M = T · Rz · Ry · Rx · S`. Inlined to keep the loader free of the
+ * base/math barrel.
+ */
+function composeTRS(
+  tx: number, ty: number, tz: number,
+  rx: number, ry: number, rz: number,
+  sx: number, sy: number, sz: number,
+): Float64Array<any> {
+  const cx = Math.cos(rx), sxr = Math.sin(rx);
+  const cy = Math.cos(ry), syr = Math.sin(ry);
+  const cz = Math.cos(rz), szr = Math.sin(rz);
+
+  // Rotation R = Rz·Ry·Rx (rotate about X, then Y, then Z).
+  const r00 = cy * cz;
+  const r01 = sxr * syr * cz - cx * szr;
+  const r02 = cx * syr * cz + sxr * szr;
+  const r10 = cy * szr;
+  const r11 = sxr * syr * szr + cx * cz;
+  const r12 = cx * syr * szr - sxr * cz;
+  const r20 = -syr;
+  const r21 = sxr * cy;
+  const r22 = cx * cy;
+
+  const m = new Float64Array(16);
+  m[0] = r00 * sx;  m[1] = r10 * sx;  m[2]  = r20 * sx;  m[3]  = 0;
+  m[4] = r01 * sy;  m[5] = r11 * sy;  m[6]  = r21 * sy;  m[7]  = 0;
+  m[8] = r02 * sz;  m[9] = r12 * sz;  m[10] = r22 * sz;  m[11] = 0;
+  m[12] = tx;       m[13] = ty;       m[14] = tz;        m[15] = 1;
+  return m;
+}
+
+function extractDiffuse(matNode: FBXNode): [number, number, number] {
+  const c = prop70(matNode, "DiffuseColor") || prop70(matNode, "Diffuse");
+  if (c && c.length >= 3) return [c[0], c[1], c[2]];
+  return [0.7, 0.7, 0.7];
+}
+
+function extractOpacity(matNode: FBXNode): number {
+  const direct = firstFiniteProp70Value(matNode, ["Opacity", "SimLabOpacity"]);
+  if (direct !== null) {
+    return clamp01(direct);
+  }
+  const transparency = firstFiniteProp70Value(matNode, ["TransparencyFactor"]);
+  if (transparency !== null) {
+    return clamp01(1 - transparency);
+  }
+  const transparentColor = prop70(matNode, "TransparentColor");
+  if (transparentColor && transparentColor.length >= 3) {
+    return clamp01(1 - Math.max(transparentColor[0], transparentColor[1], transparentColor[2]));
+  }
+  return 1;
+}
+
+function firstFiniteProp70Value(matNode: FBXNode, names: string[]): number | null {
+  for (const name of names) {
+    const values = prop70(matNode, name);
+    if (values && Number.isFinite(values[0])) {
+      return values[0];
+    }
+  }
+  return null;
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+/** Colour-slot property names an FBX Texture may be connected to a Material on. */
+function isColorProp(prop: string | null): boolean {
+  return prop !== null && /diffusecolor|basecolor|^color$|\|basecolor/i.test(prop);
+}
+
+/**
+ * Resolves a material's diffuse/colour texture from the connection graph and
+ * emits it. v1 handles **embedded** textures only — the image bytes carried in a
+ * connected Video's `Content`. External-file references (`RelativeFilename` with
+ * no embedded data) are skipped, since resolving them needs a base URL the
+ * parser isn't given. Returns the SceneModel texture id, or undefined.
+ */
+/** The diffuse texture wired to a material — a colour slot if present, else any. */
+function diffuseTexId(
+  matId: number,
+  childrenOf: Map<number, Array<{id: number; prop: string | null}>>,
+  textures: Map<number, FBXNode>,
+): number | undefined {
+  const conns = childrenOf.get(matId) || [];
+  for (const c of conns) if (textures.has(c.id) && isColorProp(c.prop)) return c.id;
+  for (const c of conns) if (textures.has(c.id)) return c.id;
+  return undefined;
+}
+
+/** Embedded image bytes for a texture, via a connected Video's Content property. */
+function embeddedTextureBytes(
+  texId: number,
+  childrenOf: Map<number, Array<{id: number; prop: string | null}>>,
+  videos: Map<number, FBXNode>,
+): Uint8Array | null {
+  for (const c of childrenOf.get(texId) || []) {
+    const video = videos.get(c.id);
+    if (!video) continue;
+    const v = findChild(video, "Content")?.props[0];
+    if (v instanceof Uint8Array && v.length > 0) return v;
+  }
+  return null;
+}
+
+/**
+ * Decodes every embedded diffuse texture referenced by a material, in small
+ * concurrent chunks, and registers each on the SceneModel keyed by FBX texture
+ * id. createImageBitmap runs off the main thread, so a chunk decodes in
+ * parallel instead of one-at-a-time. Chunked to bound peak decoded-image
+ * memory. After this, {@link emitDiffuseTexture} is a plain lookup.
+ */
+async function predecodeDiffuseTextures(
+  materials: Map<number, FBXNode>,
+  childrenOf: Map<number, Array<{id: number; prop: string | null}>>,
+  textures: Map<number, FBXNode>,
+  videos: Map<number, FBXNode>,
+  sceneModel: any,
+  emittedTex: Map<number, string>,
+): Promise<void> {
+  // Unique diffuse texture ids referenced across all materials.
+  const texIds: number[] = [];
+  const seen = new Set<number>();
+  for (const matId of materials.keys()) {
+    const texId = diffuseTexId(matId, childrenOf, textures);
+    if (texId !== undefined && !seen.has(texId)) { seen.add(texId); texIds.push(texId); }
+  }
+
+  const DECODE_CHUNK = 4;
+  const canDecode = typeof createImageBitmap === "function" && typeof Blob !== "undefined";
+
+  for (let chunkStart = 0; chunkStart < texIds.length; chunkStart += DECODE_CHUNK) {
+    const chunkEnd = Math.min(chunkStart + DECODE_CHUNK, texIds.length);
+
+    // Issue every decodable texture in this chunk concurrently.
+    const bufs: Array<ArrayBuffer | null> = [];
+    const decoding: Array<Promise<ImageBitmap | null>> = [];
+    for (let i = chunkStart; i < chunkEnd; i++) {
+      const bytes = embeddedTextureBytes(texIds[i], childrenOf, videos);
+      if (!bytes) {
+        bufs.push(null);
+        decoding.push(Promise.resolve(null));
+        continue;
+      }
+      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      bufs.push(buf);
+      // Fall back to `buffers` (null bitmap) when decoding is unavailable
+      // (e.g. tests) or fails, so the data still round-trips.
+      decoding.push(canDecode
+        ? createImageBitmap(new Blob([buf])).catch((e) => {
+            console.warn(`[FBXLoader] failed to decode embedded texture ${texIds[i]}:`, e);
+            return null;
+          })
+        : Promise.resolve(null));
+    }
+    const bitmaps = await Promise.all(decoding);
+
+    for (let i = chunkStart; i < chunkEnd; i++) {
+      const buf = bufs[i - chunkStart];
+      if (!buf) {
+        console.warn(`[FBXLoader] texture ${texIds[i]} has no embedded data (external file ref); skipping.`);
+        continue;
+      }
+      const id = `fbx-tex-${texIds[i]}`;
+      const bitmap = bitmaps[i - chunkStart];
+      const textureParams = bitmap
+        ? { id, image: bitmap, minFilter: LinearFilter, magFilter: LinearFilter, mipmap: false }
+        : { id, buffers: [buf], minFilter: LinearFilter, magFilter: LinearFilter, mipmap: false };
+      const r = sceneModel.createTexture(textureParams);
+      if ((r as any).ok === false) {
+        console.warn(`[FBXLoader] createTexture failed:`, (r as any).error);
+        continue;
+      }
+      emittedTex.set(texIds[i], id);
+    }
+  }
+}
+
+/** Looks up a material's diffuse texture, decoded up front by {@link predecodeDiffuseTextures}. */
+function emitDiffuseTexture(
+  matId: number,
+  childrenOf: Map<number, Array<{id: number; prop: string | null}>>,
+  textures: Map<number, FBXNode>,
+  emittedTex: Map<number, string>,
+): string | undefined {
+  const texId = diffuseTexId(matId, childrenOf, textures);
+  return texId === undefined ? undefined : emittedTex.get(texId);
+}
+
+/** Reads a `Properties70` `P` entry's numeric values (those after the 4 tags). */
+function prop70(node: FBXNode, name: string): number[] | null {
+  const props70 = findChild(node, "Properties70");
+  if (!props70) return null;
+  for (const p of props70.children) {
+    if (p.name === "P" && p.props[0] === name) {
+      return p.props.slice(4).map(Number);
+    }
+  }
+  return null;
+}
+
+function emitAnimations(
+  sceneModel: any,
+  animationStacks: Map<number, FBXNode>,
+  animationCurves: Map<number, FBXNode>,
+  animationCurveNodes: Map<number, FBXNode>,
+  models: Map<number, FBXNode>,
+  childrenOf: Map<number, Array<{id: number; prop: string | null}>>,
+  parentsOf: Map<number, Array<{id: number; prop: string | null}>>,
+  modelTransformIds: Map<number, string>,
+): void {
+  if (animationStacks.size === 0 || animationCurveNodes.size === 0) {
+    return;
+  }
+  const channels: any[] = [];
+  for (const [curveNodeId, curveNode] of animationCurveNodes) {
+    const target = findAnimationCurveNodeTarget(curveNodeId, models, parentsOf);
+    if (!target) {
+      continue;
+    }
+    const transformId = modelTransformIds.get(target.modelId);
+    if (!transformId) {
+      continue;
+    }
+    const axisCurves = findAxisCurves(curveNodeId, animationCurves, childrenOf);
+    const sampler = buildTransformSampler(target.property, axisCurves, prop70(models.get(target.modelId)!, target.fbxProperty));
+    if (!sampler) {
+      continue;
+    }
+    channels.push({
+      target: {
+        type: "transform",
+        transformId,
+        property: target.property,
+      },
+      sampler,
+    });
+  }
+  if (channels.length === 0) {
+    return;
+  }
+  const stack = animationStacks.values().next().value;
+  const animationId = `fbx-animation-${stack?.props?.[0] ?? "0"}`;
+  const result = sceneModel.createAnimation({
+    id: animationId,
+    name: cleanFBXName(stack?.props?.[1]) || "FBX Animation",
+    channels,
+  });
+  if (result && result.ok === false) {
+    console.warn("[FBXLoader] createAnimation failed:", result.error);
+  }
+}
+
+function findAnimationCurveNodeTarget(
+  curveNodeId: number,
+  models: Map<number, FBXNode>,
+  parentsOf: Map<number, Array<{id: number; prop: string | null}>>,
+): {modelId: number; fbxProperty: string; property: "translation" | "rotation" | "scale"} | null {
+  for (const {id, prop} of parentsOf.get(curveNodeId) || []) {
+    if (!models.has(id) || !prop) {
+      continue;
+    }
+    if (prop === "Lcl Translation") {
+      return {modelId: id, fbxProperty: prop, property: "translation"};
+    }
+    if (prop === "Lcl Rotation") {
+      return {modelId: id, fbxProperty: prop, property: "rotation"};
+    }
+    if (prop === "Lcl Scaling") {
+      return {modelId: id, fbxProperty: prop, property: "scale"};
+    }
+  }
+  return null;
+}
+
+function findAxisCurves(
+  curveNodeId: number,
+  animationCurves: Map<number, FBXNode>,
+  childrenOf: Map<number, Array<{id: number; prop: string | null}>>,
+): Partial<Record<"X" | "Y" | "Z", FBXNode>> {
+  const axisCurves: Partial<Record<"X" | "Y" | "Z", FBXNode>> = {};
+  for (const {id, prop} of childrenOf.get(curveNodeId) || []) {
+    if (!animationCurves.has(id) || !prop) {
+      continue;
+    }
+    const axis = prop.endsWith("|X") ? "X" : prop.endsWith("|Y") ? "Y" : prop.endsWith("|Z") ? "Z" : null;
+    if (axis) {
+      axisCurves[axis] = animationCurves.get(id);
+    }
+  }
+  return axisCurves;
+}
+
+function buildTransformSampler(
+  property: "translation" | "rotation" | "scale",
+  axisCurves: Partial<Record<"X" | "Y" | "Z", FBXNode>>,
+  defaultValues: number[] | null,
+): {times: number[]; values: number[]; interpolation: "LINEAR"} | null {
+  const primary = axisCurves.X || axisCurves.Y || axisCurves.Z;
+  if (!primary) {
+    return null;
+  }
+  const ticks = arrayProp(findChild(primary, "KeyTime"));
+  if (!ticks || ticks.length === 0) {
+    return null;
+  }
+  const times = Array.from(ticks, (tick) => Number(tick) / FBX_TIME_TICKS_PER_SECOND);
+  const xValues = curveValues(axisCurves.X);
+  const yValues = curveValues(axisCurves.Y);
+  const zValues = curveValues(axisCurves.Z);
+  const base = defaultValues || (property === "scale" ? [1, 1, 1] : [0, 0, 0]);
+  const values: number[] = [];
+  for (let i = 0; i < times.length; i++) {
+    const x = valueAt(xValues, i, base[0] ?? 0);
+    const y = valueAt(yValues, i, base[1] ?? (property === "scale" ? 1 : 0));
+    const z = valueAt(zValues, i, base[2] ?? (property === "scale" ? 1 : 0));
+    if (property === "rotation") {
+      const quat = eulerToQuat([x, y, z], "XYZ");
+      values.push(quat[0], quat[1], quat[2], quat[3]);
+    } else {
+      values.push(x, y, z);
+    }
+  }
+  return {times, values, interpolation: "LINEAR"};
+}
+
+function curveValues(curve: FBXNode | undefined): ArrayLike<number> | null {
+  return arrayProp(findChild(curve, "KeyValueFloat"));
+}
+
+function valueAt(values: ArrayLike<number> | null, index: number, fallback: number): number {
+  return values && index < values.length ? Number(values[index]) : fallback;
+}
+
+function cleanFBXName(value: unknown): string {
+  return String(value ?? "").split("\0\x01")[0].trim();
+}
+
+/** Object id from the Model's `"Name\0\x01Model"` property, made unique. */
+function modelObjectId(modelNode: FBXNode, modelId: number, used: Set<string>): string {
+  let name = cleanFBXName(modelNode.props[1]) || `fbx-obj-${modelId}`;
+  let id = name;
+  let n = 1;
+  while (used.has(id)) id = `${name}_${n++}`;
+  used.add(id);
+  return id;
+}
+
+function arrayProp(node: FBXNode | undefined): ArrayLike<number> | null {
+  if (!node || node.props.length === 0) return null;
+  const v = node.props[0];
+  return (v && typeof v.length === "number" && typeof v !== "string") ? v : null;
+}
+
+function scalarProp(node: FBXNode | undefined): any {
+  return node && node.props.length > 0 ? node.props[0] : undefined;
+}

@@ -1,0 +1,77 @@
+import type {Data} from "@xeokit/sdk/model/data";
+import type {Scene} from "@xeokit/sdk/model/scene";
+import type {Viewer, View} from "@xeokit/sdk/viewing/viewer";
+import {createDataObjectTreeNodeComponent} from "./DataObjectTreeNode";
+import {DataObjectStoreysStore} from "./DataObjectStoreysStore";
+import {loadVue} from "../../ui/loadVue";
+import {loadExplorerIcons} from "../tree/loadExplorerIcons";
+import {createPagedTree, type PagedTreeHandle} from "../tree/PagedTree";
+
+export interface IFCStoreysViewParams {
+  container: HTMLElement;
+  data: Data;
+  scene: Scene;
+  viewer: Viewer;
+  view?: View;
+  vue?: any;
+}
+
+export class IFCStoreysView {
+  readonly store: DataObjectStoreysStore;
+  private _app: any = null;
+  private _tree: PagedTreeHandle | null = null;
+
+  private constructor(params: IFCStoreysViewParams, Vue: any) {
+    this.store = new DataObjectStoreysStore({
+      ...params,
+      makeReactive: Vue.reactive
+    });
+  }
+
+  static async create(params: IFCStoreysViewParams): Promise<IFCStoreysView> {
+    const Vue = params.vue || await loadVue();
+    const storeysView = new IFCStoreysView(params, Vue);
+    await storeysView._mount(params.container, Vue);
+    return storeysView;
+  }
+
+  destroy(): void {
+    this._app?.unmount();
+    this._app = null;
+    this._tree = null;
+    this.store.destroy();
+  }
+
+  async revealNode(id: string): Promise<void> { await this._tree?.reveal(id); }
+
+  private async _mount(container: HTMLElement, Vue: any): Promise<void> {
+    const icons = await loadExplorerIcons();
+    const DataObjectTreeNode = createDataObjectTreeNodeComponent(icons.SlidersHorizontal);
+    const PagedTree = createPagedTree(Vue, DataObjectTreeNode, icons);
+    const view = this;
+    const store = this.store;
+    this._app = Vue.createApp({
+      name: "IFCStoreysView",
+      components: {PagedTree},
+      setup() {
+        return {
+          state: store.state,
+          store,
+          bindTree: (tree: PagedTreeHandle | null) => { view._tree = tree; }
+        };
+      },
+      template: `
+        <section class="xeokit-data-tree" :class="{ 'is-busy': state.busy }">
+          <header class="xeokit-data-tree-header">
+            <div>
+              <h1>IFC Storeys</h1>
+              <p>{{ state.roots.length }} building storey{{ state.roots.length === 1 ? '' : 's' }}</p>
+            </div>
+          </header>
+          <PagedTree class="xeokit-data-tree-roots" :store="store" :ref="bindTree"/>
+        </section>
+      `
+    });
+    this._app.mount(container);
+  }
+}

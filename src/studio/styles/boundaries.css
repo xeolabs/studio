@@ -1,0 +1,184 @@
+        .boundaries-panel {
+            min-width: 0;
+            min-height: 0;
+            display: grid;
+            grid-template-rows: auto auto minmax(0, 1fr);
+            background: #f7f9fb;
+            overflow: hidden;
+            color: #25313f;
+            font-size: 12px;
+        }
+
+        .boundaries-toolbar {
+            min-width: 0;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 180px;
+            gap: 10px;
+            align-items: end;
+            padding: 10px 12px;
+            border-bottom: 1px solid #d7dee7;
+            background: #ffffff;
+        }
+
+        .boundaries-toolbar h1 {
+            margin: 0;
+            color: #1f2c3a;
+            font-size: 14px;
+            line-height: 1.2;
+        }
+
+        .boundaries-toolbar p {
+            margin: 3px 0 0;
+            color: #697482;
+            font-size: 11px;
+            line-height: 1.25;
+        }
+
+        .boundaries-search {
+            min-width: 0;
+            display: grid;
+            gap: 3px;
+            color: #526171;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .boundaries-search input {
+            min-width: 0;
+            height: 26px;
+            padding: 0 7px;
+            border: 1px solid #c8d1dc;
+            border-radius: 4px;
+            background: #ffffff;
+            color: #1f2c3a;
+            font: 12px system-ui, sans-serif;
+        }
+
+        .boundaries-summary {
+            min-width: 0;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            gap: 8px;
+            align-items: center;
+            padding: 6px 12px;
+            border-bottom: 1px solid #e4e9ef;
+            background: #fbfcfe;
+            color: #526171;
+            font-size: 11px;
+        }
+
+        .boundaries-summary code {
+            font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+
+        .boundaries-summary code {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #1f2c3a;
+        }
+
+        .boundaries-refreshing {
+            color: #2367c7;
+            font-weight: 700;
+        }
+
+        .boundaries-minimap-grid {
+            min-width: 0;
+            display: grid;
+            align-content: start;
+            gap: 10px;
+            overflow: auto;
+            padding: 10px 12px 14px;
+        }
+
+        .boundaries-minimap-card {
+            min-width: 0;
+            border: 1px solid #dce3eb;
+            border-left: 3px solid #2d5e8c;
+            border-radius: 6px;
+            background: #ffffff;
+            overflow: hidden;
+        }
+
+        .boundaries-minimap-card[data-axis="front"] {
+            border-left-color: #2c7e6f;
+        }
+
+        .boundaries-minimap-card[data-axis="side"] {
+            border-left-color: #9c4666;
+        }
+
+        .boundaries-minimap-card header {
+            min-width: 0;
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 7px 9px;
+            border-bottom: 1px solid #edf1f5;
+            background: #fbfcfe;
+        }
+
+        .boundaries-minimap-card h2 {
+            margin: 0;
+            color: #2d5e8c;
+            font-size: 12px;
+            line-height: 1.2;
+        }
+
+        .boundaries-minimap-card[data-axis="front"] h2 {
+            color: #2c7e6f;
+        }
+
+        .boundaries-minimap-card[data-axis="side"] h2 {
+            color: #9c4666;
+        }
+
+        .boundaries-minimap-card header span {
+            color: #697482;
+            font-size: 10px;
+            white-space: nowrap;
+        }
+
+        .boundaries-svg-wrap {
+            padding: 8px;
+            background: #fcfcfc;
+        }
+
+        .boundaries-svg {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-height: 340px;
+            border: 1px solid #e1e7ee;
+            border-radius: 5px;
+            background: #ffffff;
+        }
+
+        .boundaries-svg-label {
+            font: 10.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            fill: #5f6b78;
+        }
+
+        .boundaries-camera rect,
+        .boundaries-camera polygon {
+            fill: #2d5e8c;
+            stroke: #111827;
+            stroke-width: 1.6;
+            stroke-linejoin: round;
+        }
+
+        .boundaries-camera line {
+            stroke: #88a6c5;
+            stroke-width: 1.4;
+        }
+
+        .boundaries-empty {
+            margin: 0;
+            color: #697482;
+            font-style: italic;
+        }
+

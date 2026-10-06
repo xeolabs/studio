@@ -1,0 +1,73 @@
+        .object-detail-panel {
+            display: grid;
+            align-content: start;
+            gap: 12px;
+        }
+
+        .object-detail-list {
+            margin: 0;
+            display: grid;
+            gap: 6px;
+        }
+
+        .object-detail-list div {
+            min-width: 0;
+            display: grid;
+            grid-template-columns: 86px minmax(0, 1fr);
+            gap: 8px;
+            align-items: baseline;
+        }
+
+        .object-detail-list dt {
+            color: #697482;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .object-detail-list dd {
+            margin: 0;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #20242a;
+        }
+
+        .object-properties {
+            min-width: 0;
+            display: grid;
+            gap: 8px;
+        }
+
+        .object-properties table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            background: #ffffff;
+            border: 1px solid #d7dee7;
+        }
+
+        .object-properties th,
+        .object-properties td {
+            min-width: 0;
+            padding: 5px 6px;
+            border-bottom: 1px solid #edf1f5;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            text-align: left;
+            font-size: 11px;
+        }
+
+        .object-properties th {
+            width: 42%;
+            color: #526171;
+            font-weight: 700;
+            background: #f8fafc;
+        }
+
+        .object-empty-note {
+            color: #697482;
+            font-size: 11px;
+        }
+

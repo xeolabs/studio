@@ -1,0 +1,912 @@
+import {apply, createUUID} from "../../base/utils";
+import {SDKErrorType, type SDKResult} from "../../base/core";
+import {Scene, SceneMesh, SceneModel, SceneObject} from "../../model/scene";
+import {View} from "./View";
+import type {ViewerParams} from "./ViewerParams";
+import type {ViewParams} from "./ViewParams";
+import {ViewerEvents} from "./ViewerEvents";
+import {Effect} from "./Effect";
+import {LODVisibility} from "../lod/LODVisibility";
+
+/**
+ * 3D model viewer.
+ *
+ * See {@link viewing!viewer | @xeokit/sdk/viewing/viewer} for usage.
+ */
+export class Viewer {
+
+  /**
+   * ID of this Viewer.
+   */
+  declare id: string;
+
+  /**
+   * True once this Viewer has been destroyed.
+   *
+   * Don't use this Viewer if this is ````false````.
+   */
+  declare destroyed: boolean;
+
+  /**
+   * The events emitted by this Viewer.
+   */
+  readonly events: ViewerEvents;
+
+  /**
+   * The Viewer's scene representation.
+   *
+   * The {@link model!scene.SceneModel | SceneModels} is the container of {@link model!scene.SceneModel | SceneModels}
+   * and {@link model!scene.SceneObject | SceneObjects}, which contain the geometry and materials for models currently
+   * loaded in the Viewer.
+   */
+  scene: Scene;
+
+  /**
+   * Map of {@link Effect | Effects} in this Viewer.
+   */
+  readonly effects: { [key: string]: Effect };
+
+  /**
+   * Map of all the Views in this Viewer.
+   *
+   * Each {@link viewing!viewer.View | View} is mapped here against {@link View.id | View.id}.
+   *
+   * Each {@link viewing!viewer.View | View} is an independently configurable view of the Viewer's models, with its own
+   * canvas, camera position, section planes, lights, and object visual states.
+   */
+  readonly views: { [key: string]: View };
+
+  /**
+   * List of all the Views in this Viewer.
+   *
+   * Each {@link viewing!viewer.View | View} is an independently configurable view of the Viewer's models, with its own canvas, camera position, section planes, lights, and object visual states.
+   *
+   * @internal
+   */
+  readonly viewList: View[];
+
+  /**
+   * Per-view renderer-side LOD suppression mask.
+   *
+   * This does not mutate application-level {@link ViewObject.visible}. Renderers
+   * combine it with normal view/object visibility while drawing.
+   *
+   * @internal
+   */
+  readonly lodVisibility: LODVisibility;
+
+  /**
+   *  The number of {@link View | Views} belonging to this Viewer.
+   */
+  numViews: number;
+
+  /**
+   * Enables or disables error logging to the console for this Viewer.
+   *
+   * Default value is ````false````.
+   */
+  public logging: boolean = false;
+
+  // Each subscribe() call returns an unsubscribe function — held here
+  // so detachScene() can call each one to release the handler. Held
+  // as `() => void | undefined` because attachScene may not have run
+  // (or detachScene may have already cleared them).
+  //
+  // The set covers every Scene event that requires a render-side
+  // reaction — ViewObject lifecycle (so each View can sync its
+  // ViewObjects), SceneModel lifecycle, and the mesh / object /
+  // geometry / transform / material mutations that affect what's
+  // drawn (each one requests a render on every attached View).
+  // Texture imageData changes have their own atlas-aware
+  // path inside the renderer's ViewManager and aren't routed here.
+  private _onSceneDestroyed?: () => void;
+  private _onSceneObjectCreated?: () => void;
+  private _onSceneObjectDestroyed?: () => void;
+  private _onSceneModelBuildStarted?: () => void;
+  private _onSceneModelBatchStarted?: () => void;
+  private _onSceneModelBatchCommitted?: () => void;
+  private _onSceneModelBatchRolledBack?: () => void;
+  private _onSceneModelBuildFinished?: () => void;
+  private _onSceneObjectMeshAdded?: () => void;
+  private _onSceneObjectMeshRemoved?: () => void;
+  private _onSceneMeshCreated?: () => void;
+  private _onSceneMeshDestroyed?: () => void;
+  private _onSceneMeshMatrixChanged?: () => void;
+  private _onSceneMeshMoved?: () => void;
+  private _onSceneMeshColorChanged?: () => void;
+  private _onSceneMeshOpacityChanged?: () => void;
+  private _onSceneTransformMatrixChanged?: () => void;
+  private _onSceneGeometryCreated?: () => void;
+  private _onSceneGeometryDestroyed?: () => void;
+  private _onSceneGeometryUpdated?: () => void;
+  private _onSceneMaterialColorChanged?: () => void;
+  private _onSceneMaterialEmissiveColorChanged?: () => void;
+  private _onSceneMaterialOpacityChanged?: () => void;
+  private _onSceneMaterialPatternChanged?: () => void;
+  private _renderSuspendCount = 0;
+  private readonly _renderSuspensionsByModel = new Map<SceneModel, number>();
+  private readonly _pendingRenderViews = new Set<View>();
+  private readonly _pendingSceneObjects = new Map<SceneModel, Set<SceneObject>>();
+
+  /**
+   * Creates a Viewer.
+   *
+   * @param params - Viewer configuration.
+   * @param params.scene - Contains model representations. The same Scene can be attached to any number of Viewers.
+   * @param params.id - ID for this Viewer, automatically generated by default.
+   * @param params.logging - Enables or disables error logging to the console for this Viewer. Default value is ````false````.
+   */
+  constructor(params?: {
+    scene?: Scene,
+    id?: string,
+    logging?: boolean
+  }) {
+    this.id = params?.id || createUUID();
+    this.events = new ViewerEvents();
+    this.effects = {};
+    this.viewList = [];
+    this.numViews = 0;
+    this.views = {};
+    this.lodVisibility = new LODVisibility((viewId) => {
+      this.views[viewId]?.needsRender();
+    });
+    this.destroyed = false;
+    this.logging = !!params?.logging;
+    if (params?.scene) {
+      this.attachScene(params.scene);
+    }
+  }
+
+  /**
+   * Attaches a {@link model!scene.Scene | Scene} to this Viewer.
+   *
+   * * Creates {@link ViewObject | ViewObjects} in each existing {@link viewing!viewer.View | View} for all {@link SceneObject | SceneObjects} in the attached {@link model!scene.Scene | Scene}.
+   * * Subscribes to {@link Scene.events.onSceneObjectCreated | Scene.events.onSceneObjectCreated} and {@link Scene.events.onSceneObjectDestroyed | Scene.events.onSceneObjectDestroyed} events to create and destroy {@link ViewObject | ViewObjects} in each existing {@link viewing!viewer.View | View} as {@link SceneObject | SceneObjects} are created and destroyed in the attached {@link model!scene.Scene | Scene}.
+   *
+   * @param scene - The Scene to show.
+   * @param scene
+   */
+  public attachScene(scene: Scene): SDKResult<Viewer> {
+    if (this.destroyed) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[Viewer.attachScene] Viewer has been destroyed."
+      });
+    }
+    if (this.scene === scene) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[Viewer.attachScene] Scene already attached."
+      });
+    }
+    if (scene.destroyed) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[Viewer.attachScene] Scene has been destroyed."
+      });
+    }
+    if (this.scene) {
+      this.detachScene();
+    }
+
+    this.scene = scene;
+    this._seedRenderSuspensions();
+
+    const sceneObjects = this.scene.objects;
+    for (const sceneObjectId in sceneObjects) {
+      const sceneObject = sceneObjects[sceneObjectId];
+      if (!sceneObject.model.headless) {
+        this._attachSceneObject(sceneObject);
+      }
+    }
+
+    this._onSceneDestroyed = this.scene.events.onSceneDestroyed.subscribe(() => {
+      this.detachScene();
+    });
+
+    // Single shared callback used by every render-relevant Scene
+    // mutation event. Args are ignored — the Viewer's job here is to
+    // tell each View "you have a fresh frame to draw"; the renderer
+    // walks the scene state directly when it actually paints.
+    const nudgeAllViews = () => {
+      const viewList = this.viewList;
+      for (let i = 0, len = viewList.length; i < len; i++) {
+        const view = viewList[i];
+        if (view) {
+          view.needsRender();
+        }
+      }
+    };
+
+    this._onSceneObjectCreated = this.scene.events.onSceneObjectCreated.subscribe((_scene: Scene, sceneObject: SceneObject) => {
+      this._attachSceneObject(sceneObject);
+    });
+
+    this._onSceneObjectDestroyed = this.scene.events.onSceneObjectDestroyed.subscribe((_scene: Scene, sceneObject: SceneObject) => {
+      this._removePendingSceneObject(sceneObject);
+      this._detachSceneObject(sceneObject);
+    });
+
+    this._onSceneModelBuildStarted = this.scene.events.onSceneModelBuildStarted.subscribe((_scene: Scene, sceneModel: SceneModel) => {
+      this._addRenderSuspension(sceneModel);
+    });
+
+    this._onSceneModelBatchStarted = this.scene.events.onSceneModelBatchStarted.subscribe((sceneModel: SceneModel) => {
+      this._addRenderSuspension(sceneModel);
+    });
+
+    this._onSceneModelBatchCommitted = this.scene.events.onSceneModelBatchCommitted.subscribe((sceneModel: SceneModel, batch) => {
+      this._removeRenderSuspension(sceneModel);
+      if (sceneModel.headless) {
+        return;
+      }
+      for (const sceneObject of batch.objects) {
+        if (!sceneObject.destroyed && sceneModel.objects[sceneObject.id] === sceneObject) {
+          this._attachSceneObject(sceneObject);
+        }
+      }
+      if (sceneModel.building) return;
+      nudgeAllViews();
+    });
+
+    this._onSceneModelBuildFinished = this.scene.events.onSceneModelBuildFinished.subscribe((_scene: Scene, sceneModel: SceneModel) => {
+      this._removeRenderSuspension(sceneModel);
+      if (sceneModel.headless) {
+        this._flushPendingRenderViews();
+        return;
+      }
+      const pending = this._pendingSceneObjects.get(sceneModel);
+      this._pendingSceneObjects.delete(sceneModel);
+      if (pending) {
+        for (const sceneObject of pending) {
+          if (!sceneObject.destroyed && sceneModel.objects[sceneObject.id] === sceneObject) {
+            this._attachSceneObject(sceneObject);
+          }
+        }
+      }
+      nudgeAllViews();
+      this._flushPendingRenderViews();
+    });
+
+    this._onSceneModelBatchRolledBack = this.scene.events.onSceneModelBatchRolledBack.subscribe((sceneModel: SceneModel) => {
+      this._removeRenderSuspension(sceneModel);
+      this._flushPendingRenderViews();
+    });
+
+    // Each subscribe() returns an unsubscribe fn — store and call
+    // on detach. The cast lets one `nudgeAllViews` serve emitters
+    // with different (sender, args) signatures.
+    const sub = <T extends (...a: any[]) => void>(emitter: { subscribe(h: T): () => void }, h: () => void): () => void =>
+      emitter.subscribe(h as unknown as T);
+
+    const events = this.scene.events;
+    this._onSceneObjectMeshAdded         = events.onSceneObjectMeshAdded.subscribe((sceneObject) => {
+      if (!this._isSceneObjectDeferred(sceneObject)) {
+        nudgeAllViews();
+      }
+    });
+    this._onSceneObjectMeshRemoved       = events.onSceneObjectMeshRemoved.subscribe((sceneObject) => {
+      if (!this._isSceneObjectDeferred(sceneObject)) {
+        nudgeAllViews();
+      }
+    });
+    this._onSceneMeshCreated             = events.onSceneMeshCreated.subscribe((_scene, sceneMesh) => {
+      if (!this._isSceneMeshDeferred(sceneMesh)) {
+        nudgeAllViews();
+      }
+    });
+    this._onSceneMeshDestroyed           = sub(events.onSceneMeshDestroyed,           nudgeAllViews);
+    this._onSceneMeshMatrixChanged       = sub(events.onSceneMeshMatrixChanged,       nudgeAllViews);
+    this._onSceneMeshMoved               = sub(events.onSceneMeshMoved,               nudgeAllViews);
+    this._onSceneMeshColorChanged        = sub(events.onSceneMeshColorChanged,        nudgeAllViews);
+    this._onSceneMeshOpacityChanged      = sub(events.onSceneMeshOpacityChanged,      nudgeAllViews);
+    this._onSceneTransformMatrixChanged  = sub(events.onSceneTransformMatrixChanged,  nudgeAllViews);
+    this._onSceneGeometryCreated         = events.onSceneGeometryCreated.subscribe((_scene, sceneGeometry) => {
+      if (!this._isSceneGeometryDeferred(sceneGeometry)) {
+        nudgeAllViews();
+      }
+    });
+    this._onSceneGeometryDestroyed       = sub(events.onSceneGeometryDestroyed,       nudgeAllViews);
+    this._onSceneGeometryUpdated         = sub(events.onSceneGeometryUpdated,         nudgeAllViews);
+    this._onSceneMaterialColorChanged    = sub(events.onSceneMaterialColorChanged,    nudgeAllViews);
+    this._onSceneMaterialEmissiveColorChanged = sub(events.onSceneMaterialEmissiveColorChanged, nudgeAllViews);
+    this._onSceneMaterialOpacityChanged  = sub(events.onSceneMaterialOpacityChanged,  nudgeAllViews);
+    this._onSceneMaterialPatternChanged  = sub(events.onSceneMaterialPatternChanged,  nudgeAllViews);
+
+    this.events.onSceneAttached.dispatch(this, scene);
+
+    return {
+      ok: true,
+      value: this
+    };
+  }
+
+  private _attachSceneObject(sceneObject: SceneObject) {
+    if (this._isSceneObjectDeferred(sceneObject)) {
+      if (!sceneObject.model.headless) {
+        let pending = this._pendingSceneObjects.get(sceneObject.model);
+        if (!pending) this._pendingSceneObjects.set(sceneObject.model, pending = new Set());
+        pending.add(sceneObject);
+      }
+      return;
+    }
+    this._removePendingSceneObject(sceneObject);
+    const viewList = this.viewList;
+    for (let i = 0, len = viewList.length; i < len; i++) {
+      const view = viewList[i];
+      if (view) {
+        view._attachSceneObject(sceneObject);
+      }
+    }
+  }
+
+  private _isSceneGeometryDeferred(sceneGeometry: {model?: SceneModel | null}): boolean {
+    const sceneModel = sceneGeometry.model;
+    return !!sceneModel && (sceneModel.headless || sceneModel.building || !!sceneModel.activeBatch?.includesGeometry(sceneGeometry as any));
+  }
+
+  private _removePendingSceneObject(sceneObject: SceneObject): void {
+    const pending = this._pendingSceneObjects.get(sceneObject.model);
+    if (pending) {
+      pending.delete(sceneObject);
+      if (pending.size === 0) this._pendingSceneObjects.delete(sceneObject.model);
+    }
+  }
+
+  private _isSceneMeshDeferred(sceneMesh: SceneMesh): boolean {
+    const sceneModel = sceneMesh.model;
+    return !!sceneModel && (sceneModel.headless || sceneModel.building || !!sceneModel.activeBatch?.includesMesh(sceneMesh));
+  }
+
+  private _isSceneObjectDeferred(sceneObject: SceneObject): boolean {
+    const sceneModel = sceneObject.model;
+    return !!sceneModel && (sceneModel.headless || sceneModel.building || !!sceneModel.activeBatch?.includesObject(sceneObject));
+  }
+
+  /**
+   * @private
+   */
+  _requestViewRender(view: View): boolean {
+    if (this._isRenderSuspended()) {
+      this._pendingRenderViews.add(view);
+      return false;
+    }
+    return true;
+  }
+
+  private _isRenderSuspended(): boolean {
+    return this._renderSuspendCount > 0;
+  }
+
+  private _seedRenderSuspensions(): void {
+    this._renderSuspendCount = 0;
+    this._renderSuspensionsByModel.clear();
+    const sceneModels = this.scene?.models;
+    if (!sceneModels) {
+      return;
+    }
+    for (const sceneModelId in sceneModels) {
+      const sceneModel = sceneModels[sceneModelId];
+      if (!sceneModel) {
+        continue;
+      }
+      if (sceneModel.headless) {
+        continue;
+      }
+      if (sceneModel.building) {
+        this._addRenderSuspension(sceneModel);
+      }
+      if (sceneModel.activeBatch) {
+        this._addRenderSuspension(sceneModel);
+      }
+    }
+  }
+
+  private _addRenderSuspension(sceneModel: SceneModel | undefined): void {
+    if (!sceneModel) {
+      return;
+    }
+    if (sceneModel.headless) {
+      return;
+    }
+    const count = this._renderSuspensionsByModel.get(sceneModel) ?? 0;
+    this._renderSuspensionsByModel.set(sceneModel, count + 1);
+    this._renderSuspendCount++;
+  }
+
+  private _removeRenderSuspension(sceneModel: SceneModel | undefined): void {
+    if (!sceneModel) {
+      return;
+    }
+    const count = this._renderSuspensionsByModel.get(sceneModel) ?? 0;
+    if (count <= 0) {
+      return;
+    }
+    if (count === 1) {
+      this._renderSuspensionsByModel.delete(sceneModel);
+    } else {
+      this._renderSuspensionsByModel.set(sceneModel, count - 1);
+    }
+    if (this._renderSuspendCount > 0) {
+      this._renderSuspendCount--;
+    }
+  }
+
+  private _flushPendingRenderViews(): void {
+    if (this._isRenderSuspended() || this._pendingRenderViews.size === 0) {
+      return;
+    }
+    const views = Array.from(this._pendingRenderViews);
+    this._pendingRenderViews.clear();
+    for (let i = 0, len = views.length; i < len; i++) {
+      const view = views[i];
+      if (!view.destroyed) {
+        view.needsRender();
+      }
+    }
+  }
+
+  private _detachSceneObject(sceneObject: SceneObject) {
+    const viewList = this.viewList;
+    for (let i = 0, len = viewList.length; i < len; i++) {
+      const view = viewList[i];
+      if (view) {
+        view._detachSceneObject(sceneObject);
+      }
+    }
+  }
+
+  /**
+   * Detaches the currently attached {@link model!scene.Scene | Scene} from this Viewer.
+   *
+   * * Destroys all {@link ViewObject | ViewObjects} in each existing {@link viewing!viewer.View | View} that were created for {@link SceneObject | SceneObjects} in the detached {@link model!scene.Scene | Scene}.
+   * * Unsubscribes from {@link Scene.events.onSceneObjectCreated | Scene.events.onSceneObjectCreated} and {@link Scene.events.onSceneObjectDestroyed | Scene.events.onSceneObjectDestroyed} events of the detached {@link model!scene.Scene | Scene}.
+   */
+  public detachScene(): SDKResult<Viewer> {
+    if (this.destroyed) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[Viewer.detachScene] Viewer has been destroyed."
+      });
+    }
+    if (!this.scene) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[Viewer.detachScene] No Scene attached."
+      });
+    }
+
+    const sceneObjects = this.scene.objects;
+    for (const sceneObjectId in sceneObjects) {
+      this._detachSceneObject(sceneObjects[sceneObjectId]);
+    }
+    this._pendingSceneObjects.clear();
+
+    // EventEmitter.subscribe() returns an unsubscribe function; call
+    // each one to release the handler. (The previous implementation
+    // passed the unsubscribe fn back into `.unsubscribe(...)`, which
+    // is a no-op — those handlers leaked and stayed attached to the
+    // Scene for the lifetime of every Viewer that ever attached it.)
+    const unsubs: (undefined | (() => void))[] = [
+      this._onSceneDestroyed,
+      this._onSceneObjectCreated,
+      this._onSceneObjectDestroyed,
+      this._onSceneModelBuildStarted,
+      this._onSceneModelBatchStarted,
+      this._onSceneModelBatchCommitted,
+      this._onSceneModelBatchRolledBack,
+      this._onSceneModelBuildFinished,
+      this._onSceneObjectMeshAdded,
+      this._onSceneObjectMeshRemoved,
+      this._onSceneMeshCreated,
+      this._onSceneMeshDestroyed,
+      this._onSceneMeshMatrixChanged,
+      this._onSceneMeshMoved,
+      this._onSceneMeshColorChanged,
+      this._onSceneMeshOpacityChanged,
+      this._onSceneTransformMatrixChanged,
+      this._onSceneGeometryCreated,
+      this._onSceneGeometryDestroyed,
+      this._onSceneGeometryUpdated,
+      this._onSceneMaterialColorChanged,
+      this._onSceneMaterialEmissiveColorChanged,
+      this._onSceneMaterialOpacityChanged,
+      this._onSceneMaterialPatternChanged,
+    ];
+    for (const u of unsubs) {
+      if (u) u();
+    }
+    this._onSceneDestroyed                = undefined;
+    this._onSceneObjectCreated            = undefined;
+    this._onSceneObjectDestroyed          = undefined;
+    this._onSceneModelBuildStarted        = undefined;
+    this._onSceneModelBatchStarted        = undefined;
+    this._onSceneModelBatchCommitted      = undefined;
+    this._onSceneModelBatchRolledBack     = undefined;
+    this._onSceneModelBuildFinished       = undefined;
+    this._onSceneObjectMeshAdded          = undefined;
+    this._onSceneObjectMeshRemoved        = undefined;
+    this._onSceneMeshCreated              = undefined;
+    this._onSceneMeshDestroyed            = undefined;
+    this._onSceneMeshMatrixChanged        = undefined;
+    this._onSceneMeshMoved                = undefined;
+    this._onSceneMeshColorChanged         = undefined;
+    this._onSceneMeshOpacityChanged       = undefined;
+    this._onSceneTransformMatrixChanged   = undefined;
+    this._onSceneGeometryCreated          = undefined;
+    this._onSceneGeometryDestroyed        = undefined;
+    this._onSceneGeometryUpdated          = undefined;
+    this._onSceneMaterialColorChanged     = undefined;
+    this._onSceneMaterialEmissiveColorChanged = undefined;
+    this._onSceneMaterialOpacityChanged   = undefined;
+    this._onSceneMaterialPatternChanged   = undefined;
+    this._renderSuspendCount = 0;
+    this._renderSuspensionsByModel.clear();
+    this._pendingRenderViews.clear();
+    this.lodVisibility.clear();
+
+    const scene = this.scene;
+    this.scene = null;
+    this.events.onSceneDetached.dispatch(this, scene);
+
+    return {
+      ok: true,
+      value: this
+    };
+  }
+
+  // /**
+  //  * Creates a new {@link Effect} within this Viewer.
+  //  *
+  //  * To destroy the Effect after use, call {@link Effect.destroy}.
+  //  *
+  //  * @param effectParams
+  //  */
+  // createEffect(effectParams: any): SDKResult<Effect> {
+  //   if (this.destroyed) {
+  //     return this.logError({
+  //       ok: false,
+  //       type: SDKErrorType.InvalidOperation,
+  //       error: "[Viewer.createEffect] Viewer has been destroyed."
+  //     });
+  //   }
+  //   const effectId = effectParams.id || createUUID();
+  //   if (this.effects[effectId]) {
+  //     return this.logError({
+  //       ok: false,
+  //       type: SDKErrorType.InvalidInput,
+  //       error: `[Viewer.createEffect] An Effect with ID "${effectId}" already exists.`
+  //     });
+  //   }
+  //   const effect = new Effect(this, apply({id: effectId}, effectParams));
+  //   this.effects[effectId] = effect;
+  //   this.events.onEffectCreated.dispatch(this, effect);
+  //   return {
+  //     ok: true,
+  //     value: effect
+  //   };
+  // }
+  //
+  // _destroyEffect(effect: Effect): void {
+  //   if (!this.effects[effect.id]) {
+  //     return;
+  //   }
+  //   delete this.effects[effect.id];
+  //   this.events.onEffectDestroyed.dispatch(this, effect);
+  // }
+
+  /**
+   * Creates a new {@link viewing!viewer.View | View} within this Viewer.
+   *
+   * * To destroy the View after use, call {@link View.destroy}.
+   *
+   * ### Usage
+   *
+   * ````typescript
+   * const viewResult = myViewer.createView({
+   *      id: "myView",
+   *      elementId: "myView1"
+   * });
+   *
+   * if (!viewResult.ok) {
+   *      console.error(viewResult.error);
+   * } else {
+   *      const view = viewResult.value;
+   *      view.camera.eye = [-3.933, 2.855, 27.018];
+   *      view.camera.look = [4.400, 3.724, 8.899];
+   *      view.camera.up = [-0.018, 0.999, 0.039];
+   *
+   *      //...
+   * }
+   * ````
+   *
+   * @param viewParams - View configuration.
+   * @returns A result containing the created {@link viewing!viewer.View | View} on success, or an error message on failure.
+   */
+  createView(viewParams: ViewParams): SDKResult<View> {
+    if (this.destroyed) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[Viewer.createView] Viewer has been destroyed."
+      });
+    }
+
+    const viewId = viewParams.id || createUUID();
+
+    if (this.views[viewId]) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[Viewer.createView] A View with ID "${viewId}" already exists.`
+      });
+    }
+
+    if (!viewParams.elementId && !viewParams.htmlElement) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidInput,
+        error: `[Viewer.createView] Must provide either elementId or htmlElement in viewParams.`
+      });
+    }
+
+    if (viewParams.elementId) {
+      const htmlElement = document.getElementById(viewParams.elementId);
+      if (!(htmlElement instanceof HTMLElement)) {
+        return this.logError({
+          ok: false,
+          type: SDKErrorType.InvalidInput,
+          error: `[Viewer.createView] The elementId "${viewParams.elementId}" does not reference a valid HTMLElement.`
+        });
+      }
+    }
+
+    if (viewParams.htmlElement) {
+      if (!(viewParams.htmlElement instanceof HTMLElement)) {
+        return this.logError({
+          ok: false,
+          type: SDKErrorType.InvalidInput,
+          error: `[Viewer.createView] The provided htmlElement is not a valid HTMLElement.`
+        });
+      }
+    }
+
+    if (viewParams.backgroundColor) {
+      const bgColor = viewParams.backgroundColor;
+      if (bgColor.length < 3) {
+        return this.logError({
+          ok: false,
+          type: SDKErrorType.InvalidInput,
+          error: `[Viewer.createView] The provided backgroundColor must have at least three elements for R, G, and B.`
+        });
+      }
+      for (let i = 0; i < 3; i++) {
+        const c = bgColor[i];
+        if (c < 0 || c > 1) {
+          return this.logError({
+            ok: false,
+            type: SDKErrorType.InvalidInput,
+            error: `[Viewer.createView] The provided backgroundColor elements must be in range [0..1].`
+          });
+        }
+      }
+    }
+
+    const view = new View(this, apply({id: viewId}, viewParams));
+    this._attachView(view);
+
+    if (this.scene) {
+      const sceneObjects = this.scene.objects;
+      for (const sceneObjectId in sceneObjects) {
+        view._attachSceneObject(sceneObjects[sceneObjectId]);
+      }
+    }
+
+    this.events.onViewCreated.dispatch(this, view);
+
+    return {
+      ok: true,
+      value: view
+    };
+  }
+
+  /**
+   * Called by a {@link viewing!viewer.View | View} when it is destroyed.
+   * @private
+   */
+  _destroyView(view: View): void {
+    this._detachView(view);
+    this.events.onViewDestroyed.dispatch(this, view);
+  }
+
+  /**
+   * Requests a render from all {@link View | Views} belonging to this Viewer.
+   *
+   * @internal
+   */
+  needsRender(): void {
+    const viewList = this.viewList;
+    for (let i = 0, len = viewList.length; i < len; i++) {
+      const view = viewList[i];
+      if (view) {
+        view.needsRender();
+      }
+    }
+  }
+
+  /**
+   * Clears this Viewer.
+   *
+   * Destroys all existing {@link View | Views} and resets all properties to their default values.
+   */
+
+  clear(): SDKResult<void> {
+    if (this.destroyed) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[Viewer.clear] Viewer already destroyed"
+      });
+    }
+
+    const viewList = this.viewList;
+    for (let i = 0, len = viewList.length; i < len; i++) {
+      const view = viewList[i];
+      if (view) {
+        view.destroy();
+      }
+    }
+
+    return {
+      ok: true,
+      value: undefined
+    };
+  }
+
+  private _attachView(view: View): void {
+    if (this.views[view.id]) {
+      return;
+    }
+    this.views[view.id] = view;
+    for (let viewIndex = 0; ; viewIndex++) {
+      if (!this.viewList[viewIndex]) {
+        this.viewList[viewIndex] = view;
+        this.numViews++;
+        view.viewIndex = viewIndex;
+        return;
+      }
+    }
+  }
+
+  private _detachView(view: View): void {
+    if (!this.views[view.id]) {
+      return;
+    }
+    delete this.views[view.id];
+    delete this.viewList[view.viewIndex];
+    this.numViews--;
+  }
+
+
+  /**
+   * Configures this Viewer.
+   *
+   * @param viewerParams
+   */
+  fromParams(viewerParams: ViewerParams): SDKResult<void> {
+    if (this.destroyed) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[Viewer.fromParams] Viewer already destroyed"
+      });
+    }
+    if (viewerParams.views) {
+      for (const viewParams of viewerParams.views) {
+        if (viewParams.id !== undefined) {
+          const existingView = this.views[viewParams.id];
+          if (existingView) {
+            const result = existingView.fromParams(viewParams); // Update existing View
+            if (result.ok === false) {
+              return result; // Already logged
+            }
+          } else {
+            const result = this.createView(viewParams);
+            if (result.ok === false) {
+              return result; // Already logged
+            }
+          }
+        } else {
+          const result = this.createView(viewParams);
+          if (result.ok === false) {
+            return result; // Already logged
+          }
+        }
+      }
+    }
+    return {
+      ok: true,
+      value: undefined
+    };
+  }
+
+  /**
+   * Gets the current configuration of this Viewer.
+   */
+  toParams(): SDKResult<any> {
+    if (this.destroyed) {
+      return this.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[Viewer.toParams] Viewer already destroyed"
+      });
+    }
+
+    const params = {
+      views: []
+    };
+
+    for (let i = 0, len = this.viewList.length; i < len; i++) {
+      const view = this.viewList[i];
+      if (!view) {
+        continue;
+      }
+      const viewParamsResult = view.toParams();
+      if (!viewParamsResult.ok) {
+        return viewParamsResult;
+      }
+      params.views.push(viewParamsResult.value);
+    }
+
+    return {
+      ok: true,
+      value: params
+    };
+  }
+
+  /**
+   * Logs an error via the Viewer's {@link ViewerEvents.onError | ViewerEvents.onError} event.
+   * @private
+   * @param result
+   */
+  logError(result: SDKResult<any>): SDKResult<any> {
+    if (result.ok === false) {
+      if (this.logging) {
+        console.error(`[xeokit Viewer] ${result.error}`);
+      }
+      this.events.onError.dispatch(this, result);
+    }
+    return result;
+  }
+
+  /**
+   * Destroys this Viewer.
+   */
+  destroy(): void {
+    if (this.destroyed) {
+      return;
+    }
+    // Release Scene-event subscriptions before flipping `destroyed`
+    // — detachScene() refuses to run on a destroyed Viewer, so order
+    // matters. Without this, every subscribe() done in attachScene()
+    // would leak past the Viewer lifetime, the Scene would keep its
+    // handlers, and a long-lived Scene would slowly grow a list of
+    // dead Viewer references.
+    if (this.scene) {
+      this.detachScene();
+    }
+    this.destroyed = true;
+    for (const id in this.views) {
+      this.views[id].destroy();
+    }
+    this.events.onViewerDestroyed.dispatch(this, false);
+    this.events.destroy();
+  }
+
+
+}

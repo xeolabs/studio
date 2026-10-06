@@ -1,0 +1,1287 @@
+import {SDKTask} from "../../../base/core";
+import type {Vec3} from "../../../base/math/vector";
+import {SceneRaycaster} from "../../../spatial/collision";
+import type {View} from "../../viewer";
+import type {ModelNavigationController} from "../model";
+import type {VehicleNavigationControllerParams} from "./VehicleNavigationControllerParams";
+
+const DEFAULT_CAMERA_HEIGHT = 1.45;
+const DEFAULT_BODY_RADIUS = 0.45;
+const DEFAULT_MAX_FORWARD_SPEED = 22;
+const DEFAULT_MAX_REVERSE_SPEED = 5;
+const DEFAULT_ACCELERATION = 9;
+const DEFAULT_BRAKE_DECELERATION = 18;
+const DEFAULT_COAST_DECELERATION = 5;
+const DEFAULT_TURN_RATE_DEGREES_PER_SECOND = 95;
+const DEFAULT_KEY_STEER_INITIAL_SCALE = 0.28;
+const DEFAULT_KEY_STEER_RAMP_SECONDS = 1.45;
+const KEY_STEER_ATTACK_RESPONSE = 18;
+const KEY_STEER_RELEASE_RESPONSE = 8;
+const MIN_GROUND_TURN_SPEED_SCALE = 0.65;
+const MAX_GROUND_TURN_SPEED_SCALE = 1.85;
+const MIN_LEAN_SPEED_SCALE = 0.08;
+const MAX_LEAN_RESPONSE_SPEED_SCALE = 1.35;
+const DEFAULT_SLOPE_PITCH_FACTOR = 0.42;
+const DEFAULT_SLOPE_PITCH_SMOOTHING = 5.5;
+const DEFAULT_MAX_SLOPE_PITCH_DEGREES = 10;
+const GROUND_NORMAL_SMOOTHING = 7.5;
+const SLOPE_PITCH_TARGET_DEADBAND_RADIANS = degreesToRadians(0.18);
+const CAMERA_POSITION_EPSILON = 0.0001;
+const CAMERA_DIRECTION_EPSILON = 0.000001;
+const DEFAULT_LEAN_DEGREES = 18;
+const DEFAULT_LEAN_SMOOTHING = 8;
+const DEFAULT_MAX_PITCH_DEGREES = 18;
+const DEFAULT_MAX_FLIGHT_PITCH_DEGREES = 65;
+const DEFAULT_FLIGHT_TAKEOFF_HEIGHT = 4;
+const DEFAULT_FLIGHT_TAKEOFF_SPEED = 7;
+const DEFAULT_FLIGHT_LANDING_FALL_SPEED = 16;
+const DEFAULT_FLIGHT_ACCELERATION = 13;
+const DEFAULT_FLIGHT_BRAKE_DECELERATION = 12;
+const DEFAULT_FLIGHT_MIN_GLIDE_SPEED = 5;
+const DEFAULT_FLIGHT_AIR_DRAG = 0.45;
+const DEFAULT_FLIGHT_GRAVITY = 3.2;
+const DEFAULT_FLIGHT_SOFT_LANDING_RANGE = 0.75;
+const DEFAULT_FLIGHT_PITCH_RATE_DEGREES_PER_SECOND = 58;
+const DEFAULT_FLIGHT_STEERING_RESPONSE = 2.8;
+const DEFAULT_CONTROL_SURFACE_RESPONSE = 5.5;
+const DEFAULT_CONTROL_SURFACE_RETURN_RESPONSE = 3.5;
+const DEFAULT_MOUSE_DRAG_YAW_SENSITIVITY = 0.0034;
+const DEFAULT_MOUSE_DRAG_PITCH_SENSITIVITY = 0.0021;
+const DEFAULT_MOUSE_DRAG_RESPONSE = 5.2;
+const DEFAULT_MAX_MOUSE_DRAG_INPUT_PER_FRAME = 0.45;
+const DEFAULT_STEP_HEIGHT = 0.45;
+const DEFAULT_MAX_FALL = 1.2;
+const DEFAULT_FALL_ACCELERATION = 9.8;
+const DEFAULT_MAX_FALL_SPEED = 35;
+const DEFAULT_MAX_SLOPE_DEGREES = 55;
+const MIN_LOOK_DISTANCE = 0.01;
+const MAX_FRAME_SECONDS = 0.1;
+const MAX_GROUNDED_SWEEP_STEP = 0.2;
+const DOWN_RAY_CLEARANCE = 0.05;
+
+const FORWARD_KEYS = new Set(["KeyW", "w", "W"]);
+const BACKWARD_KEYS = new Set(["KeyS", "s", "S"]);
+const GROUND_THROTTLE_KEYS = new Set([...FORWARD_KEYS, "ArrowUp"]);
+const GROUND_BRAKE_KEYS = new Set([...BACKWARD_KEYS, "ArrowDown"]);
+const PITCH_UP_KEYS = new Set(["ArrowUp"]);
+const PITCH_DOWN_KEYS = new Set(["ArrowDown"]);
+const LEFT_KEYS = new Set(["KeyA", "a", "A", "ArrowLeft"]);
+const RIGHT_KEYS = new Set(["KeyD", "d", "D", "ArrowRight"]);
+const FLIGHT_TOGGLE_KEYS = new Set(["Space", " "]);
+const HANDLED_KEYS = new Set([
+    ...GROUND_THROTTLE_KEYS,
+    ...GROUND_BRAKE_KEYS,
+    ...LEFT_KEYS,
+    ...RIGHT_KEYS,
+    ...FLIGHT_TOGGLE_KEYS
+]);
+
+/**
+ * Opt-in vehicle-style navigation for moving through large models.
+ *
+ * ``VehicleNavigationController`` keeps a current speed instead of applying
+ * instant walk steps. ``W``/``S`` accelerate and brake, ``A``/``D`` and the
+ * left/right arrow keys ramp into turns, and click-drag steers yaw/pitch like
+ * the procedural city vehicle demo. Ground steering is more responsive at low
+ * speed, while camera bank grows and settles faster as speed increases, giving
+ * a skateboard-like carve. While following a sloped drive surface, the view
+ * eases a little into uphill and downhill gradients instead of staying fully
+ * erect. ``Space`` toggles flight mode: the vehicle detaches and lifts off,
+ * then can glide on its own momentum and softly land on a drive surface. It can
+ * also follow drive surfaces and block movement through obstacles using Scene
+ * raycasts.
+ */
+export class VehicleNavigationController {
+
+    /**
+     * The View navigated by this controller.
+     */
+    readonly view: View;
+
+    /**
+     * Raycaster used for drive-surface following and obstacle checks.
+     */
+    readonly raycaster: SceneRaycaster;
+
+    #active = false;
+    #destroyed = false;
+    #keysDown = new Set<string>();
+    #mouseOver = false;
+    #pointerId: number | null = null;
+    #pointerLastX = 0;
+    #pointerLastY = 0;
+    #lastTime = performance.now();
+    #task: SDKTask;
+    #viewElement: HTMLElement;
+    #suspendModelNavigationController?: ModelNavigationController;
+    #suspendedModelNavigationControllerActive: boolean | null = null;
+    #unsubscribeViewDestroyed?: () => void;
+
+    #cameraHeight: number;
+    #bodyRadius: number;
+    #maxForwardSpeed: number;
+    #maxReverseSpeed: number;
+    #acceleration: number;
+    #brakeDeceleration: number;
+    #coastDeceleration: number;
+    #turnRateRadiansPerSecond: number;
+    #keySteerInitialScale: number;
+    #keySteerRampSeconds: number;
+    #keySteerHoldSeconds = 0;
+    #keySteerDirection = 0;
+    #keySteerValue = 0;
+    #leanRadians: number;
+    #leanSmoothing: number;
+    #currentLean = 0;
+    #currentSlopePitch = 0;
+    #slopePitchFactor: number;
+    #slopePitchSmoothing: number;
+    #maxSlopePitchRadians: number;
+    #groundNormal: Vec3 | null = null;
+    #maxPitchRadians: number;
+    #maxFlightPitchRadians: number;
+    #flightTakeoffHeight: number;
+    #flightTakeoffSpeed: number;
+    #flightLandingFallSpeed: number;
+    #flightAcceleration: number;
+    #flightBrakeDeceleration: number;
+    #flightMinGlideSpeed: number;
+    #flightAirDrag: number;
+    #flightGravity: number;
+    #flightSoftLandingRange: number;
+    #flightPitchRateRadiansPerSecond: number;
+    #flightSteeringResponse: number;
+    #keyboardPitchInFlight: boolean;
+    #aircraftControlSurfaces: boolean;
+    #controlSurfaceResponse: number;
+    #controlSurfaceReturnResponse: number;
+    #rudderDeflection = 0;
+    #elevatorDeflection = 0;
+    #mouseDragYawSensitivity: number;
+    #mouseDragPitchSensitivity: number;
+    #mouseDragResponse: number;
+    #maxMouseDragInputPerFrame: number;
+    #relativeYawInput = 0;
+    #relativePitchInput = 0;
+    #mouseDragYawInput = 0;
+    #mouseDragPitchInput = 0;
+    #flightVelocity: Vec3 = [0, 0, 0];
+    #flying = false;
+    #landingAfterFlight = false;
+    #flightLiftRemaining = 0;
+    #stepHeight: number;
+    #maxFall: number;
+    #fallAcceleration: number;
+    #maxFallSpeed: number;
+    #fallSpeed = 0;
+    #driveableDot: number;
+    #keyboardEnabledOnlyOnMouseover: boolean;
+    #collision: boolean;
+    #gravity: boolean;
+    #speed = 0;
+    #obstacleFilter?: (objectId: string) => boolean;
+    #driveSurfaceFilter?: (objectId: string) => boolean;
+
+    constructor(view: View, params: VehicleNavigationControllerParams = {}) {
+        this.view = view;
+        this.raycaster = params.raycaster || new SceneRaycaster(view.viewer.scene);
+        this.#viewElement = view.htmlElement;
+        this.#suspendModelNavigationController = params.suspendModelNavigationController;
+        this.#cameraHeight = params.cameraHeight ?? DEFAULT_CAMERA_HEIGHT;
+        this.#bodyRadius = params.bodyRadius ?? DEFAULT_BODY_RADIUS;
+        this.#maxForwardSpeed = Math.max(0, params.maxForwardSpeed ?? DEFAULT_MAX_FORWARD_SPEED);
+        this.#maxReverseSpeed = Math.max(0, params.maxReverseSpeed ?? DEFAULT_MAX_REVERSE_SPEED);
+        this.#acceleration = Math.max(0, params.acceleration ?? DEFAULT_ACCELERATION);
+        this.#brakeDeceleration = Math.max(0, params.brakeDeceleration ?? DEFAULT_BRAKE_DECELERATION);
+        this.#coastDeceleration = Math.max(0, params.coastDeceleration ?? DEFAULT_COAST_DECELERATION);
+        this.#turnRateRadiansPerSecond = degreesToRadians(params.turnRateDegreesPerSecond ?? DEFAULT_TURN_RATE_DEGREES_PER_SECOND);
+        this.#keySteerInitialScale = clamp(params.keySteerInitialScale ?? DEFAULT_KEY_STEER_INITIAL_SCALE, 0, 1);
+        this.#keySteerRampSeconds = Math.max(0.001, params.keySteerRampSeconds ?? DEFAULT_KEY_STEER_RAMP_SECONDS);
+        this.#leanRadians = degreesToRadians(params.leanDegrees ?? DEFAULT_LEAN_DEGREES);
+        this.#leanSmoothing = Math.max(0, params.leanSmoothing ?? DEFAULT_LEAN_SMOOTHING);
+        this.#slopePitchFactor = Math.max(0, params.slopePitchFactor ?? DEFAULT_SLOPE_PITCH_FACTOR);
+        this.#slopePitchSmoothing = Math.max(0, params.slopePitchSmoothing ?? DEFAULT_SLOPE_PITCH_SMOOTHING);
+        this.#maxSlopePitchRadians = degreesToRadians(Math.max(0, params.maxSlopePitchDegrees ?? DEFAULT_MAX_SLOPE_PITCH_DEGREES));
+        this.#maxPitchRadians = degreesToRadians(params.maxPitchDegrees ?? DEFAULT_MAX_PITCH_DEGREES);
+        this.#maxFlightPitchRadians = degreesToRadians(params.maxFlightPitchDegrees ?? DEFAULT_MAX_FLIGHT_PITCH_DEGREES);
+        this.#flightTakeoffHeight = Math.max(0, params.flightTakeoffHeight ?? DEFAULT_FLIGHT_TAKEOFF_HEIGHT);
+        this.#flightTakeoffSpeed = Math.max(0, params.flightTakeoffSpeed ?? DEFAULT_FLIGHT_TAKEOFF_SPEED);
+        this.#flightLandingFallSpeed = Math.max(0, params.flightLandingFallSpeed ?? DEFAULT_FLIGHT_LANDING_FALL_SPEED);
+        this.#flightAcceleration = Math.max(0, params.flightAcceleration ?? DEFAULT_FLIGHT_ACCELERATION);
+        this.#flightBrakeDeceleration = Math.max(0, params.flightBrakeDeceleration ?? DEFAULT_FLIGHT_BRAKE_DECELERATION);
+        this.#flightMinGlideSpeed = Math.max(0, params.flightMinGlideSpeed ?? DEFAULT_FLIGHT_MIN_GLIDE_SPEED);
+        this.#flightAirDrag = Math.max(0, params.flightAirDrag ?? DEFAULT_FLIGHT_AIR_DRAG);
+        this.#flightGravity = Math.max(0, params.flightGravity ?? DEFAULT_FLIGHT_GRAVITY);
+        this.#flightSoftLandingRange = Math.max(0, params.flightSoftLandingRange ?? DEFAULT_FLIGHT_SOFT_LANDING_RANGE);
+        this.#flightPitchRateRadiansPerSecond = degreesToRadians(params.flightPitchRateDegreesPerSecond ?? DEFAULT_FLIGHT_PITCH_RATE_DEGREES_PER_SECOND);
+        this.#flightSteeringResponse = Math.max(0, params.flightSteeringResponse ?? DEFAULT_FLIGHT_STEERING_RESPONSE);
+        this.#keyboardPitchInFlight = params.keyboardPitchInFlight ?? true;
+        this.#aircraftControlSurfaces = params.aircraftControlSurfaces === true;
+        this.#controlSurfaceResponse = Math.max(0, params.controlSurfaceResponse ?? DEFAULT_CONTROL_SURFACE_RESPONSE);
+        this.#controlSurfaceReturnResponse = Math.max(0, params.controlSurfaceReturnResponse ?? DEFAULT_CONTROL_SURFACE_RETURN_RESPONSE);
+        this.#mouseDragYawSensitivity = Math.max(0, params.mouseDragYawSensitivity ?? params.relativeMouseSensitivity ?? DEFAULT_MOUSE_DRAG_YAW_SENSITIVITY);
+        this.#mouseDragPitchSensitivity = Math.max(0, params.mouseDragPitchSensitivity ?? params.relativeMouseSensitivity ?? DEFAULT_MOUSE_DRAG_PITCH_SENSITIVITY);
+        this.#mouseDragResponse = Math.max(0, params.mouseDragResponse ?? DEFAULT_MOUSE_DRAG_RESPONSE);
+        this.#maxMouseDragInputPerFrame = Math.max(0, params.maxMouseDragInputPerFrame ?? DEFAULT_MAX_MOUSE_DRAG_INPUT_PER_FRAME);
+        this.#stepHeight = Math.max(0, params.stepHeight ?? DEFAULT_STEP_HEIGHT);
+        this.#maxFall = Math.max(0, params.maxFall ?? DEFAULT_MAX_FALL);
+        this.#fallAcceleration = Math.max(0, params.fallAcceleration ?? DEFAULT_FALL_ACCELERATION);
+        this.#maxFallSpeed = Math.max(0, params.maxFallSpeed ?? DEFAULT_MAX_FALL_SPEED);
+        this.#driveableDot = Math.cos(degreesToRadians(params.maxSlopeDegrees ?? DEFAULT_MAX_SLOPE_DEGREES));
+        this.#keyboardEnabledOnlyOnMouseover = params.keyboardEnabledOnlyOnMouseover ?? true;
+        this.#collision = params.collision ?? true;
+        this.#gravity = params.gravity ?? true;
+        this.#obstacleFilter = params.obstacleFilter;
+        this.#driveSurfaceFilter = params.driveSurfaceFilter;
+
+        this.#bindEvents();
+        this.#task = new SDKTask({
+            name: "VehicleNavigationController",
+            stage: SDKTask.CollectInputStage,
+            repeat: true,
+            task: () => this.#update()
+        });
+        this.#unsubscribeViewDestroyed = view.viewer.events.onViewDestroyed.subscribe((_, destroyedView) => {
+            if (destroyedView === view) {
+                this.destroy();
+            }
+        });
+        this.active = params.active ?? true;
+    }
+
+    /**
+     * Whether vehicle navigation is active.
+     */
+    set active(active: boolean) {
+        if (this.#destroyed || active === this.#active) {
+            return;
+        }
+        this.#active = active;
+        this.#lastTime = performance.now();
+        this.#keysDown.clear();
+        this.#fallSpeed = 0;
+        this.#flying = false;
+        this.#landingAfterFlight = false;
+        this.#flightLiftRemaining = 0;
+        this.#flightVelocity = [0, 0, 0];
+        this.clearInput();
+        if (active) {
+            this.#suspendDefaultController();
+        } else {
+            this.#restoreDefaultController();
+        }
+    }
+
+    get active(): boolean {
+        return this.#active;
+    }
+
+    /**
+     * Whether vehicle navigation is currently flying.
+     *
+     * Set to ``true`` to detach from the drive surface and lift off. Set to
+     * ``false`` to drop back to the nearest driveable ground or rooftop.
+     */
+    set flying(flying: boolean) {
+        if (this.#destroyed || flying === this.#flying) {
+            return;
+        }
+        this.#flying = flying;
+        if (flying) {
+            const up = this.#worldUp();
+            const basis = cameraBasis(this.view.camera.eye, this.view.camera.look, up, this.#currentSlopePitch);
+            this.#flightVelocity = mul(basis.flatForward, Math.max(this.#speed, this.#effectiveMinGlideSpeed()));
+            this.#fallSpeed = 0;
+            this.#landingAfterFlight = false;
+            this.#flightLiftRemaining = this.#flightTakeoffHeight;
+        } else {
+            this.#flightVelocity = [0, 0, 0];
+            this.#flightLiftRemaining = 0;
+            this.#landingAfterFlight = true;
+            this.#fallSpeed = Math.max(this.#fallSpeed, this.#flightLandingFallSpeed);
+        }
+    }
+
+    get flying(): boolean {
+        return this.#flying;
+    }
+
+    /**
+     * Current signed speed in world-space units per second.
+     */
+    set speed(speed: number) {
+        this.#speed = clamp(speed, -this.#maxReverseSpeed, this.#maxForwardSpeed);
+    }
+
+    get speed(): number {
+        return this.#speed;
+    }
+
+    /**
+     * Clears transient keyboard, pointer-drag and control-surface input state.
+     *
+     * This is useful when an application temporarily owns the same keys as the
+     * vehicle controller for custom movement logic and needs to guarantee that
+     * no held key state remains inside the controller.
+     */
+    clearInput(): void {
+        this.#keysDown.clear();
+        this.#keySteerHoldSeconds = 0;
+        this.#keySteerDirection = 0;
+        this.#keySteerValue = 0;
+        this.#relativeYawInput = 0;
+        this.#relativePitchInput = 0;
+        this.#mouseDragYawInput = 0;
+        this.#mouseDragPitchInput = 0;
+        this.#rudderDeflection = 0;
+        this.#elevatorDeflection = 0;
+    }
+
+    /**
+     * Camera height above the driven surface.
+     */
+    set cameraHeight(cameraHeight: number) {
+        this.#cameraHeight = Math.max(0.01, cameraHeight);
+    }
+
+    get cameraHeight(): number {
+        return this.#cameraHeight;
+    }
+
+    /**
+     * Maximum forward speed in world-space units per second.
+     */
+    set maxForwardSpeed(maxForwardSpeed: number) {
+        this.#maxForwardSpeed = Math.max(0, maxForwardSpeed);
+        this.speed = this.#speed;
+    }
+
+    get maxForwardSpeed(): number {
+        return this.#maxForwardSpeed;
+    }
+
+    /**
+     * Maximum reverse speed in world-space units per second.
+     */
+    set maxReverseSpeed(maxReverseSpeed: number) {
+        this.#maxReverseSpeed = Math.max(0, maxReverseSpeed);
+        this.speed = this.#speed;
+    }
+
+    get maxReverseSpeed(): number {
+        return this.#maxReverseSpeed;
+    }
+
+    /**
+     * Forward acceleration in world-space units per second squared.
+     */
+    set acceleration(acceleration: number) {
+        this.#acceleration = Math.max(0, acceleration);
+    }
+
+    get acceleration(): number {
+        return this.#acceleration;
+    }
+
+    /**
+     * Forward thrust acceleration while flying.
+     */
+    set flightAcceleration(flightAcceleration: number) {
+        this.#flightAcceleration = Math.max(0, flightAcceleration);
+    }
+
+    get flightAcceleration(): number {
+        return this.#flightAcceleration;
+    }
+
+    /**
+     * Braking deceleration when pressing reverse while moving forward.
+     */
+    set brakeDeceleration(brakeDeceleration: number) {
+        this.#brakeDeceleration = Math.max(0, brakeDeceleration);
+    }
+
+    get brakeDeceleration(): number {
+        return this.#brakeDeceleration;
+    }
+
+    /**
+     * Deceleration while holding reverse/brake in flight.
+     */
+    set flightBrakeDeceleration(flightBrakeDeceleration: number) {
+        this.#flightBrakeDeceleration = Math.max(0, flightBrakeDeceleration);
+    }
+
+    get flightBrakeDeceleration(): number {
+        return this.#flightBrakeDeceleration;
+    }
+
+    /**
+     * Minimum forward airspeed preserved while gliding.
+     */
+    set flightMinGlideSpeed(flightMinGlideSpeed: number) {
+        this.#flightMinGlideSpeed = Math.max(0, flightMinGlideSpeed);
+    }
+
+    get flightMinGlideSpeed(): number {
+        return this.#flightMinGlideSpeed;
+    }
+
+    /**
+     * Height gained automatically after entering flight mode.
+     */
+    set flightTakeoffHeight(flightTakeoffHeight: number) {
+        this.#flightTakeoffHeight = Math.max(0, flightTakeoffHeight);
+    }
+
+    get flightTakeoffHeight(): number {
+        return this.#flightTakeoffHeight;
+    }
+
+    /**
+     * Vertical lift speed after entering flight mode.
+     */
+    set flightTakeoffSpeed(flightTakeoffSpeed: number) {
+        this.#flightTakeoffSpeed = Math.max(0, flightTakeoffSpeed);
+    }
+
+    get flightTakeoffSpeed(): number {
+        return this.#flightTakeoffSpeed;
+    }
+
+    /**
+     * Passive deceleration when no throttle or brake key is pressed.
+     */
+    set coastDeceleration(coastDeceleration: number) {
+        this.#coastDeceleration = Math.max(0, coastDeceleration);
+    }
+
+    get coastDeceleration(): number {
+        return this.#coastDeceleration;
+    }
+
+    /**
+     * Maximum camera roll into turns, in degrees.
+     */
+    set leanDegrees(leanDegrees: number) {
+        this.#leanRadians = degreesToRadians(leanDegrees);
+    }
+
+    get leanDegrees(): number {
+        return radiansToDegrees(this.#leanRadians);
+    }
+
+    /**
+     * Destroys this controller and restores any suspended ModelNavigationController.
+     */
+    destroy(): void {
+        if (this.#destroyed) {
+            return;
+        }
+        this.active = false;
+        this.#destroyed = true;
+        this.#task.destroy();
+        this.#unbindEvents();
+        if (this.#unsubscribeViewDestroyed) {
+            this.#unsubscribeViewDestroyed();
+            this.#unsubscribeViewDestroyed = undefined;
+        }
+    }
+
+    #suspendDefaultController(): void {
+        if (!this.#suspendModelNavigationController || this.#suspendedModelNavigationControllerActive !== null) {
+            return;
+        }
+        this.#suspendedModelNavigationControllerActive = this.#suspendModelNavigationController.active;
+        this.#suspendModelNavigationController.active = false;
+    }
+
+    #restoreDefaultController(): void {
+        if (!this.#suspendModelNavigationController || this.#suspendedModelNavigationControllerActive === null) {
+            return;
+        }
+        this.#suspendModelNavigationController.active = this.#suspendedModelNavigationControllerActive;
+        this.#suspendedModelNavigationControllerActive = null;
+    }
+
+    #bindEvents(): void {
+        this.#viewElement.addEventListener("mouseenter", this.#onMouseEnter);
+        this.#viewElement.addEventListener("mouseleave", this.#onMouseLeave);
+        this.#viewElement.addEventListener("pointerdown", this.#onPointerDown);
+        this.#viewElement.addEventListener("pointermove", this.#onPointerMove);
+        this.#viewElement.addEventListener("pointerup", this.#onPointerUp);
+        this.#viewElement.addEventListener("pointercancel", this.#onPointerUp);
+        document.addEventListener("keydown", this.#onKeyDown);
+        document.addEventListener("keyup", this.#onKeyUp);
+        window.addEventListener("blur", this.#onWindowBlur);
+    }
+
+    #unbindEvents(): void {
+        this.#viewElement.removeEventListener("mouseenter", this.#onMouseEnter);
+        this.#viewElement.removeEventListener("mouseleave", this.#onMouseLeave);
+        this.#viewElement.removeEventListener("pointerdown", this.#onPointerDown);
+        this.#viewElement.removeEventListener("pointermove", this.#onPointerMove);
+        this.#viewElement.removeEventListener("pointerup", this.#onPointerUp);
+        this.#viewElement.removeEventListener("pointercancel", this.#onPointerUp);
+        document.removeEventListener("keydown", this.#onKeyDown);
+        document.removeEventListener("keyup", this.#onKeyUp);
+        window.removeEventListener("blur", this.#onWindowBlur);
+    }
+
+    #onMouseEnter = (): void => {
+        this.#mouseOver = true;
+    };
+
+    #onMouseLeave = (): void => {
+        this.#mouseOver = false;
+    };
+
+    #onPointerDown = (event: PointerEvent): void => {
+        if (!this.#active || event.button !== 0) {
+            return;
+        }
+        this.#pointerId = event.pointerId;
+        this.#pointerLastX = event.clientX;
+        this.#pointerLastY = event.clientY;
+        this.#relativeYawInput = 0;
+        this.#relativePitchInput = 0;
+        this.#mouseDragYawInput = 0;
+        this.#mouseDragPitchInput = 0;
+        this.#viewElement.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+    };
+
+    #onPointerMove = (event: PointerEvent): void => {
+        if (!this.#active) {
+            return;
+        }
+        if (this.#pointerId === null) {
+            return;
+        }
+        if (event.pointerId !== this.#pointerId) {
+            return;
+        }
+        this.#updatePointerDragFromEvent(event);
+        event.preventDefault();
+    };
+
+    #onPointerUp = (event: PointerEvent): void => {
+        if (event.pointerId !== this.#pointerId) {
+            return;
+        }
+        this.#pointerId = null;
+        this.#relativeYawInput = 0;
+        this.#relativePitchInput = 0;
+        this.#viewElement.releasePointerCapture?.(event.pointerId);
+    };
+
+    #onKeyDown = (event: KeyboardEvent): void => {
+        if (!this.#shouldHandleKeyEvent(event)) {
+            return;
+        }
+        const code = keyCode(event);
+        if (FLIGHT_TOGGLE_KEYS.has(code)) {
+            if (!event.repeat) {
+                this.flying = !this.#flying;
+            }
+            event.preventDefault();
+            return;
+        }
+        if (!HANDLED_KEYS.has(code)) {
+            return;
+        }
+        this.#keysDown.add(code);
+        event.preventDefault();
+    };
+
+    #onKeyUp = (event: KeyboardEvent): void => {
+        const code = keyCode(event);
+        if (!HANDLED_KEYS.has(code)) {
+            return;
+        }
+        this.#keysDown.delete(code);
+        if (this.#active) {
+            event.preventDefault();
+        }
+    };
+
+    #onWindowBlur = (): void => {
+        this.#pointerId = null;
+        this.clearInput();
+    };
+
+    #shouldHandleKeyEvent(event: KeyboardEvent): boolean {
+        if (!this.#active) {
+            return false;
+        }
+        if (this.#keyboardEnabledOnlyOnMouseover && !this.#mouseOver) {
+            return false;
+        }
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+            return true;
+        }
+        const tagName = target.tagName.toLowerCase();
+        return tagName !== "input" && tagName !== "textarea" && tagName !== "select" && !target.isContentEditable;
+    }
+
+    #updatePointerDragFromEvent(event: PointerEvent): void {
+        const movementX = Number.isFinite(event.movementX) && event.movementX !== 0
+            ? event.movementX
+            : event.clientX - this.#pointerLastX;
+        const movementY = Number.isFinite(event.movementY) && event.movementY !== 0
+            ? event.movementY
+            : event.clientY - this.#pointerLastY;
+        this.#pointerLastX = event.clientX;
+        this.#pointerLastY = event.clientY;
+        this.#relativeYawInput += movementX * this.#mouseDragYawSensitivity;
+        this.#relativePitchInput -= movementY * this.#mouseDragPitchSensitivity;
+    }
+
+    #update(): void {
+        if (!this.#active || this.#destroyed) {
+            return;
+        }
+        const now = performance.now();
+        const elapsedSeconds = Math.min((now - this.#lastTime) / 1000, MAX_FRAME_SECONDS);
+        this.#lastTime = now;
+        if (elapsedSeconds <= 0) {
+            return;
+        }
+
+        const up = this.#worldUp();
+        const camera = this.view.camera;
+        const basis = cameraBasis(camera.eye, camera.look, up, this.#currentSlopePitch);
+        const throttle = this.#throttleInput();
+        if (!this.#flying) {
+            this.#updateSpeed(throttle, elapsedSeconds);
+        }
+
+        const rawDragYawInput = this.#mouseDragYawTargetInput();
+        const rawDragPitchInput = this.#mouseDragPitchTargetInput();
+        const dragT = this.#mouseDragResponse === 0 ? 1 : 1 - Math.exp(-this.#mouseDragResponse * elapsedSeconds);
+        this.#mouseDragYawInput = lerpNumber(this.#mouseDragYawInput, rawDragYawInput, dragT);
+        this.#mouseDragPitchInput = lerpNumber(this.#mouseDragPitchInput, rawDragPitchInput, dragT);
+        this.#updateControlSurfaceDeflections(elapsedSeconds);
+        const steering = this.#aircraftControlSurfaces && this.#flying
+            ? this.#rudderDeflection
+            : this.#steeringInput(elapsedSeconds);
+        const currentTravelSpeed = this.#flying ? length(this.#flightVelocity) : Math.abs(this.#speed);
+        const speedRatio = this.#maxForwardSpeed > 0 ? Math.min(currentTravelSpeed / this.#maxForwardSpeed, 1) : 0;
+        const yawControl = clamp(
+            steering + (this.#aircraftControlSurfaces && this.#flying ? 0 : this.#mouseDragYawInput),
+            -1,
+            1
+        );
+        const turnSpeedScale = this.#flying
+            ? clamp(speedRatio * 1.4, 0.55, 1)
+            : groundTurnSpeedScale(speedRatio);
+        const leanSpeedScale = this.#flying
+            ? clamp(speedRatio * 1.15, MIN_LEAN_SPEED_SCALE, 1)
+            : groundLeanSpeedScale(speedRatio);
+        const directionSign = this.#flying
+            ? (dot(this.#flightVelocity, basis.flatForward) < 0 ? -1 : 1)
+            : (this.#speed < 0 ? -1 : 1);
+        const yaw = -yawControl * this.#turnRateRadiansPerSecond * elapsedSeconds * turnSpeedScale * directionSign;
+        const flatForward = normalize(rotateAroundAxis(basis.flatForward, up, yaw));
+        const pitchLimit = this.#flying ? this.#maxFlightPitchRadians : this.#maxPitchRadians;
+        const pitch = this.#pitchInput(
+            basis.pitch,
+            pitchLimit,
+            elapsedSeconds,
+            this.#aircraftControlSurfaces && this.#flying ? 0 : this.#mouseDragPitchInput
+        );
+        const pitchControlActive = this.#flying && this.#pitchControlActive();
+        const direction = normalize(add(mul(flatForward, Math.cos(pitch)), mul(up, Math.sin(pitch))));
+
+        let move: Vec3;
+        if (this.#flying) {
+            this.#updateFlightVelocity(throttle, direction, up, pitchControlActive, elapsedSeconds);
+            move = mul(this.#flightVelocity, elapsedSeconds);
+            if (this.#flightLiftRemaining > 0) {
+                const lift = Math.min(this.#flightLiftRemaining, this.#flightTakeoffSpeed * elapsedSeconds);
+                this.#flightLiftRemaining -= lift;
+                move = add(move, mul(up, lift));
+            }
+        } else {
+            move = mul(flatForward, this.#speed * elapsedSeconds);
+        }
+
+        this.#move(move, direction, up, yawControl, leanSpeedScale, elapsedSeconds);
+    }
+
+    #updateFlightVelocity(throttle: number, direction: Vec3, up: Vec3, pitchControlActive: boolean, elapsedSeconds: number): void {
+        if (throttle > 0) {
+            this.#flightVelocity = add(this.#flightVelocity, mul(direction, this.#flightAcceleration * elapsedSeconds));
+        } else if (throttle < 0) {
+            this.#flightVelocity = moveVectorTowardsZero(this.#flightVelocity, this.#flightBrakeDeceleration * elapsedSeconds);
+        }
+
+        this.#flightVelocity = add(this.#flightVelocity, mul(up, -this.#flightGravity * elapsedSeconds));
+
+        if (this.#flightAirDrag > 0) {
+            this.#flightVelocity = mul(this.#flightVelocity, Math.exp(-this.#flightAirDrag * elapsedSeconds));
+        }
+
+        this.#flightVelocity = this.#steerFlightVelocity(this.#flightVelocity, direction, up, throttle > 0 || pitchControlActive, elapsedSeconds);
+        this.#flightVelocity = this.#withMinimumForwardGlide(this.#flightVelocity, direction);
+        const flightSpeed = length(this.#flightVelocity);
+        if (this.#maxForwardSpeed > 0 && flightSpeed > this.#maxForwardSpeed) {
+            this.#flightVelocity = mul(this.#flightVelocity, this.#maxForwardSpeed / flightSpeed);
+        }
+        this.#speed = this.#flightVelocitySpeed(direction);
+    }
+
+    #updateSpeed(throttle: number, elapsedSeconds: number): void {
+        if (throttle > 0) {
+            this.#speed = moveTowards(this.#speed, this.#maxForwardSpeed, this.#acceleration * elapsedSeconds);
+        } else if (throttle < 0) {
+            if (this.#speed > 0) {
+                this.#speed = moveTowards(this.#speed, 0, this.#brakeDeceleration * elapsedSeconds);
+            } else {
+                this.#speed = moveTowards(this.#speed, -this.#maxReverseSpeed, this.#acceleration * 0.65 * elapsedSeconds);
+            }
+        } else {
+            this.#speed = moveTowards(this.#speed, 0, this.#coastDeceleration * elapsedSeconds);
+        }
+        this.#speed = clamp(this.#speed, -this.#maxReverseSpeed, this.#maxForwardSpeed);
+    }
+
+    #steeringInput(elapsedSeconds: number): number {
+        const keyInput = pressed(this.#keysDown, RIGHT_KEYS) - pressed(this.#keysDown, LEFT_KEYS);
+        if (keyInput === 0) {
+            this.#keySteerHoldSeconds = 0;
+            this.#keySteerDirection = 0;
+            this.#keySteerValue = this.#approachKeySteerValue(0, elapsedSeconds, KEY_STEER_RELEASE_RESPONSE);
+            return this.#keySteerValue;
+        }
+        const direction = Math.sign(keyInput);
+        if (direction !== this.#keySteerDirection) {
+            this.#keySteerHoldSeconds = 0;
+            this.#keySteerDirection = direction;
+        }
+        this.#keySteerHoldSeconds += elapsedSeconds;
+        const t = clamp(this.#keySteerHoldSeconds / this.#keySteerRampSeconds, 0, 1);
+        const easedT = t * t * (3 - 2 * t);
+        const target = keyInput * (this.#keySteerInitialScale + (1 - this.#keySteerInitialScale) * easedT);
+        this.#keySteerValue = this.#approachKeySteerValue(target, elapsedSeconds, KEY_STEER_ATTACK_RESPONSE);
+        return this.#keySteerValue;
+    }
+
+    #approachKeySteerValue(target: number, elapsedSeconds: number, response: number): number {
+        const t = response === 0 ? 1 : 1 - Math.exp(-response * elapsedSeconds);
+        return clamp(lerpNumber(this.#keySteerValue, target, t), -1, 1);
+    }
+
+    #updateControlSurfaceDeflections(elapsedSeconds: number): void {
+        if (!this.#aircraftControlSurfaces || !this.#flying) {
+            this.#rudderDeflection = 0;
+            this.#elevatorDeflection = 0;
+            return;
+        }
+        const rudderTarget = clamp(pressed(this.#keysDown, RIGHT_KEYS) - pressed(this.#keysDown, LEFT_KEYS) + this.#mouseDragYawInput, -1, 1);
+        const keyboardPitch = this.#keyboardPitchInFlight
+            ? pressed(this.#keysDown, PITCH_UP_KEYS) - pressed(this.#keysDown, PITCH_DOWN_KEYS)
+            : 0;
+        const elevatorTarget = clamp(keyboardPitch + this.#mouseDragPitchInput, -1, 1);
+        this.#rudderDeflection = this.#approachControlSurface(this.#rudderDeflection, rudderTarget, elapsedSeconds);
+        this.#elevatorDeflection = this.#approachControlSurface(this.#elevatorDeflection, elevatorTarget, elapsedSeconds);
+    }
+
+    #approachControlSurface(current: number, target: number, elapsedSeconds: number): number {
+        const response = target === 0 ? this.#controlSurfaceReturnResponse : this.#controlSurfaceResponse;
+        const t = response === 0 ? 1 : 1 - Math.exp(-response * elapsedSeconds);
+        return clamp(lerpNumber(current, target, t), -1, 1);
+    }
+
+    #throttleInput(): number {
+        if (this.#flying) {
+            return pressed(this.#keysDown, FORWARD_KEYS) - pressed(this.#keysDown, BACKWARD_KEYS);
+        }
+        return pressed(this.#keysDown, GROUND_THROTTLE_KEYS) - pressed(this.#keysDown, GROUND_BRAKE_KEYS);
+    }
+
+    #pitchControlActive(): boolean {
+        return (this.#keyboardPitchInFlight && (
+                pressed(this.#keysDown, PITCH_UP_KEYS) !== 0
+                || pressed(this.#keysDown, PITCH_DOWN_KEYS) !== 0))
+            || Math.abs(this.#elevatorDeflection) > 0.0001
+            || Math.abs(this.#mouseDragPitchInput) > 0.0001;
+    }
+
+    #pitchInput(currentPitch: number, pitchLimit: number, elapsedSeconds: number, mouseDragPitchInput: number): number {
+        const dragPitchDelta = mouseDragPitchInput * this.#flightPitchRateRadiansPerSecond * elapsedSeconds;
+        if (this.#flying) {
+            const keyPitch = this.#keyboardPitchInFlight
+                ? (this.#aircraftControlSurfaces
+                    ? this.#elevatorDeflection
+                    : pressed(this.#keysDown, PITCH_UP_KEYS) - pressed(this.#keysDown, PITCH_DOWN_KEYS))
+                : 0;
+            if (keyPitch !== 0 || dragPitchDelta !== 0) {
+                return clamp(currentPitch + keyPitch * this.#flightPitchRateRadiansPerSecond * elapsedSeconds + dragPitchDelta, -pitchLimit, pitchLimit);
+            }
+            return clamp(currentPitch, -pitchLimit, pitchLimit);
+        }
+        if (dragPitchDelta !== 0) {
+            return clamp(currentPitch + dragPitchDelta, -pitchLimit, pitchLimit);
+        }
+        return clamp(currentPitch, -pitchLimit, pitchLimit);
+    }
+
+    #mouseDragYawTargetInput(): number {
+        return clamp(this.#relativeYawInput, -this.#maxMouseDragInputPerFrame, this.#maxMouseDragInputPerFrame);
+    }
+
+    #mouseDragPitchTargetInput(): number {
+        return clamp(this.#relativePitchInput, -this.#maxMouseDragInputPerFrame, this.#maxMouseDragInputPerFrame);
+    }
+
+    #move(move: Vec3, viewDirection: Vec3, up: Vec3, steering: number, leanSpeedScale: number, elapsedSeconds: number): void {
+        const camera = this.view.camera;
+        const oldEye = [...camera.eye] as Vec3;
+        const oldGround = sub(oldEye, mul(up, this.#cameraHeight));
+        const moveDistance = length(move);
+
+        let ground = moveDistance === 0 ? oldGround : add(oldGround, move);
+        if (!this.#flying && moveDistance > 0) {
+            ground = this.#groundedTravel(oldGround, move, moveDistance, up, elapsedSeconds);
+        }
+
+        if (this.#flying && dot(move, up) <= 0) {
+            const landedGround = this.#flightLandingSurface(oldGround, move, up);
+            if (landedGround) {
+                ground = landedGround;
+                this.#landFromFlight(viewDirection, up);
+            }
+        }
+
+        if (this.#flying && moveDistance > 0 && this.#collision && this.#isFlightBlocked(oldEye, move, moveDistance, up)) {
+            ground = oldGround;
+            this.#flightVelocity = [0, 0, 0];
+            this.#speed = 0;
+        }
+
+        if (!this.#flying && moveDistance === 0 && (this.#gravity || this.#landingAfterFlight)) {
+            ground = this.#groundedPoint(ground, up, elapsedSeconds);
+            if (this.#fallSpeed === 0) {
+                this.#landingAfterFlight = false;
+            }
+        }
+
+        const newEye = add(ground, mul(up, this.#cameraHeight));
+        const lookDistance = Math.max(distance(camera.eye, camera.look), MIN_LOOK_DISTANCE);
+        this.#updateSlopePitch(move, viewDirection, up, elapsedSeconds);
+        const displayDirection = slopeAdjustedDirection(viewDirection, up, this.#currentSlopePitch);
+        const desiredLean = steering * this.#leanRadians * leanSpeedScale;
+        const leanT = clamp(this.#leanSmoothing * Math.min(1, leanSpeedScale * MAX_LEAN_RESPONSE_SPEED_SCALE) * elapsedSeconds, 0, 1);
+        this.#currentLean += (desiredLean - this.#currentLean) * leanT;
+        const rollAxis = flatDirection(displayDirection, up);
+
+        const newLook = add(newEye, mul(displayDirection, lookDistance));
+        const newUp = normalize(rotateAroundAxis(up, rollAxis, this.#currentLean));
+        if (
+            !almostEqual(camera.eye, newEye, CAMERA_POSITION_EPSILON) ||
+            !almostEqual(camera.look, newLook, CAMERA_POSITION_EPSILON) ||
+            !almostEqual(camera.up, newUp, CAMERA_DIRECTION_EPSILON)
+        ) {
+            camera.eye = newEye;
+            camera.look = newLook;
+            camera.up = newUp;
+        }
+    }
+
+    #groundedTravel(oldGround: Vec3, move: Vec3, moveDistance: number, up: Vec3, elapsedSeconds: number): Vec3 {
+        const steps = Math.max(1, Math.ceil(moveDistance / MAX_GROUNDED_SWEEP_STEP));
+        const stepMove = mul(move, 1 / steps);
+        const stepDistance = moveDistance / steps;
+        const stepSeconds = elapsedSeconds / steps;
+        let ground = oldGround;
+        for (let i = 0; i < steps; i++) {
+            if (this.#collision && this.#isBlocked(ground, stepMove, stepDistance, up)) {
+                this.#speed = 0;
+                return ground;
+            }
+            ground = add(ground, stepMove);
+            if (this.#gravity || this.#landingAfterFlight) {
+                ground = this.#groundedPoint(ground, up, stepSeconds);
+                if (this.#fallSpeed === 0) {
+                    this.#landingAfterFlight = false;
+                }
+            }
+        }
+        return ground;
+    }
+
+    #updateSlopePitch(move: Vec3, viewDirection: Vec3, up: Vec3, elapsedSeconds: number): void {
+        let targetPitch = this.#currentSlopePitch;
+        const moveDistance = length(move);
+        if (!this.#flying && this.#groundNormal && moveDistance > 0.0001) {
+            const travelDirection = normalize(move);
+            targetPitch = slopePitchForTravel(travelDirection, this.#groundNormal, up) * this.#slopePitchFactor;
+            targetPitch = clamp(targetPitch, -this.#maxSlopePitchRadians, this.#maxSlopePitchRadians);
+            if (Math.abs(targetPitch - this.#currentSlopePitch) < SLOPE_PITCH_TARGET_DEADBAND_RADIANS) {
+                targetPitch = this.#currentSlopePitch;
+            }
+        }
+        const t = clamp(1 - Math.exp(-this.#slopePitchSmoothing * elapsedSeconds), 0, 1);
+        this.#currentSlopePitch += (targetPitch - this.#currentSlopePitch) * t;
+    }
+
+    #flightLandingSurface(oldGround: Vec3, move: Vec3, up: Vec3): Vec3 | null {
+        const downwardDistance = Math.max(0, -dot(move, up));
+        const verticalMove = mul(up, dot(move, up));
+        const horizontalMove = sub(move, verticalMove);
+        const rayOrigins = [
+            oldGround,
+            add(oldGround, mul(horizontalMove, 0.5)),
+            add(oldGround, horizontalMove)
+        ];
+        for (const origin of rayOrigins) {
+            const rayOrigin = add(origin, mul(up, DOWN_RAY_CLEARANCE));
+            const result = this.raycaster.pick({
+                view: this.view,
+                ray: {origin: rayOrigin, dir: mul(up, -1)},
+                tMin: 0,
+                tMax: downwardDistance + this.#flightSoftLandingRange + DOWN_RAY_CLEARANCE,
+                pickSurfaceNormal: true,
+                filter: this.#driveSurfaceFilter
+            });
+            if (result.ok && result.value.hit && result.value.worldPos && this.#isDriveableNormal(result.value.worldNormal, up)) {
+                return [...result.value.worldPos] as Vec3;
+            }
+        }
+        return null;
+    }
+
+    #landFromFlight(viewDirection: Vec3, up: Vec3): void {
+        const groundForward = flatDirection(viewDirection, up);
+        this.#speed = clamp(dot(this.#flightVelocity, groundForward), -this.#maxReverseSpeed, this.#maxForwardSpeed);
+        this.#flightVelocity = [0, 0, 0];
+        this.#flying = false;
+        this.#landingAfterFlight = false;
+        this.#flightLiftRemaining = 0;
+        this.#fallSpeed = 0;
+    }
+
+    #flightVelocitySpeed(direction: Vec3): number {
+        const signedSpeed = dot(this.#flightVelocity, direction);
+        const flightSpeed = length(this.#flightVelocity);
+        if (Math.abs(signedSpeed) < 0.0001) {
+            return flightSpeed;
+        }
+        return Math.sign(signedSpeed) * flightSpeed;
+    }
+
+    #withMinimumForwardGlide(velocity: Vec3, forward: Vec3): Vec3 {
+        const minForwardSpeed = this.#effectiveMinGlideSpeed();
+        if (minForwardSpeed === 0) {
+            return velocity;
+        }
+        const forwardSpeed = dot(velocity, forward);
+        if (forwardSpeed >= minForwardSpeed) {
+            return velocity;
+        }
+        return add(velocity, mul(forward, minForwardSpeed - forwardSpeed));
+    }
+
+    #steerFlightVelocity(velocity: Vec3, direction: Vec3, up: Vec3, steerVertically: boolean, elapsedSeconds: number): Vec3 {
+        if (this.#flightSteeringResponse === 0) {
+            return velocity;
+        }
+        const speed = length(velocity);
+        if (speed < 0.0001) {
+            return velocity;
+        }
+        let desiredVelocity: Vec3;
+        if (steerVertically) {
+            desiredVelocity = mul(direction, speed);
+        } else {
+            const verticalSpeed = dot(velocity, up);
+            const verticalVelocity = mul(up, verticalSpeed);
+            const horizontalVelocity = sub(velocity, verticalVelocity);
+            const horizontalSpeed = length(horizontalVelocity);
+            desiredVelocity = add(mul(flatDirection(direction, up), horizontalSpeed), verticalVelocity);
+        }
+        const response = 1 - Math.exp(-this.#flightSteeringResponse * elapsedSeconds);
+        return lerp(velocity, desiredVelocity, clamp(response, 0, 1));
+    }
+
+    #effectiveMinGlideSpeed(): number {
+        if (this.#maxForwardSpeed === 0) {
+            return 0;
+        }
+        return Math.min(this.#flightMinGlideSpeed, this.#maxForwardSpeed);
+    }
+
+    #isBlocked(originGround: Vec3, move: Vec3, moveDistance: number, up: Vec3): boolean {
+        const direction = normalize(move);
+        const heights = [Math.max(this.#bodyRadius, 0.05), Math.max(this.#cameraHeight * 0.62, this.#bodyRadius)];
+        const tMax = moveDistance + this.#bodyRadius;
+        for (const height of heights) {
+            const origin = add(originGround, mul(up, height));
+            const result = this.raycaster.pick({
+                view: this.view,
+                ray: {origin, dir: direction},
+                tMin: 0,
+                tMax,
+                pickSurfaceNormal: true,
+                filter: this.#obstacleFilter
+            });
+            if (result.ok && result.value.hit && !this.#isDriveableNormal(result.value.worldNormal, up)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    #isFlightBlocked(originEye: Vec3, move: Vec3, moveDistance: number, up: Vec3): boolean {
+        const direction = normalize(move);
+        const right = safePerpendicular(direction, up);
+        const offsets = [
+            [0, 0],
+            [this.#bodyRadius, 0],
+            [-this.#bodyRadius, 0],
+            [0, this.#bodyRadius],
+            [0, -this.#bodyRadius]
+        ];
+        for (const [rightOffset, upOffset] of offsets) {
+            const origin = add(add(originEye, mul(right, rightOffset)), mul(up, upOffset));
+            const result = this.raycaster.pick({
+                view: this.view,
+                ray: {origin, dir: direction},
+                tMin: 0.05,
+                tMax: moveDistance + this.#bodyRadius,
+                pickSurfaceNormal: true,
+                filter: this.#obstacleFilter
+            });
+            if (result.ok && result.value.hit && !this.#isDriveableNormal(result.value.worldNormal, up)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    #groundedPoint(candidateGround: Vec3, up: Vec3, elapsedSeconds: number): Vec3 {
+        const nextFallSpeed = Math.min(this.#maxFallSpeed, this.#fallSpeed + this.#fallAcceleration * elapsedSeconds);
+        const fallDistance = (this.#fallSpeed + nextFallSpeed) * 0.5 * elapsedSeconds;
+        const surface = this.#driveSurfaceAt(candidateGround, this.#stepHeight + Math.max(this.#maxFall, fallDistance), up);
+        if (surface) {
+            this.#fallSpeed = 0;
+            this.#groundNormal = smoothedNormal(this.#groundNormal, surface.normal, GROUND_NORMAL_SMOOTHING, elapsedSeconds);
+            return surface.point;
+        }
+        this.#fallSpeed = nextFallSpeed;
+        this.#groundNormal = null;
+        return add(candidateGround, mul(up, -fallDistance));
+    }
+
+    #driveSurfaceAt(candidateGround: Vec3, verticalRange: number, up: Vec3): { point: Vec3; normal: Vec3 } | null {
+        const rayOrigin = add(candidateGround, mul(up, this.#stepHeight + DOWN_RAY_CLEARANCE));
+        const rayDirection = mul(up, -1);
+        const result = this.raycaster.pick({
+            view: this.view,
+            ray: {origin: rayOrigin, dir: rayDirection},
+            tMin: 0,
+            tMax: verticalRange + DOWN_RAY_CLEARANCE,
+            pickSurfaceNormal: true,
+            filter: this.#driveSurfaceFilter
+        });
+        if (result.ok && result.value.hit && result.value.worldPos && this.#isDriveableNormal(result.value.worldNormal, up)) {
+            return {
+                point: [...result.value.worldPos] as Vec3,
+                normal: normalize(result.value.worldNormal)
+            };
+        }
+        return null;
+    }
+
+    #isDriveableNormal(normal: Vec3 | null | undefined, up: Vec3): boolean {
+        if (!normal) {
+            return false;
+        }
+        return Math.abs(dot(normalize(normal), up)) >= this.#driveableDot;
+    }
+
+    #worldUp(): Vec3 {
+        return normalize(this.view.viewer.scene.coordinateSystem.worldUp);
+    }
+}
+
+function cameraBasis(eye: Vec3, look: Vec3, up: Vec3, slopePitch = 0): { direction: Vec3; flatForward: Vec3; right: Vec3; pitch: number } {
+    const direction = normalize(sub(look, eye));
+    const flatForward = flatDirection(direction, up);
+    const right = normalize(cross(flatForward, up));
+    const pitch = Math.asin(clamp(dot(direction, up), -1, 1)) - slopePitch;
+    return {direction, flatForward, right, pitch};
+}
+
+function flatDirection(direction: Vec3, up: Vec3): Vec3 {
+    let flatForward = sub(direction, mul(up, dot(direction, up)));
+    if (length(flatForward) < 0.00001) {
+        flatForward = perpendicular(up);
+    } else {
+        flatForward = normalize(flatForward);
+    }
+    return flatForward;
+}
+
+function pressed(keysDown: Set<string>, keys: Set<string>): number {
+    for (const key of keys) {
+        if (keysDown.has(key)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+function keyCode(event: KeyboardEvent): string {
+    return event.code || event.key;
+}
+
+function moveTowards(value: number, target: number, maxDelta: number): number {
+    if (Math.abs(target - value) <= maxDelta) {
+        return target;
+    }
+    return value + Math.sign(target - value) * maxDelta;
+}
+
+function moveVectorTowardsZero(value: Vec3, maxDelta: number): Vec3 {
+    const len = length(value);
+    if (len <= maxDelta) {
+        return [0, 0, 0];
+    }
+    return mul(value, (len - maxDelta) / len);
+}
+
+function lerp(a: Vec3, b: Vec3, t: number): Vec3 {
+    return [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t
+    ];
+}
+
+function lerpNumber(a: number, b: number, t: number): number {
+    const clampedT = clamp(t, 0, 1);
+    return a + (b - a) * clampedT;
+}
+
+function groundTurnSpeedScale(speedRatio: number): number {
+    const t = clamp(speedRatio, 0, 1);
+    return MIN_GROUND_TURN_SPEED_SCALE + (MAX_GROUND_TURN_SPEED_SCALE - MIN_GROUND_TURN_SPEED_SCALE) * (1 - t);
+}
+
+function groundLeanSpeedScale(speedRatio: number): number {
+    const t = clamp(speedRatio, 0, 1);
+    return MIN_LEAN_SPEED_SCALE + (1 - MIN_LEAN_SPEED_SCALE) * t;
+}
+
+function slopeAdjustedDirection(direction: Vec3, up: Vec3, slopePitch: number): Vec3 {
+    if (Math.abs(slopePitch) < 0.000001) {
+        return direction;
+    }
+    const flatForward = flatDirection(direction, up);
+    const basePitch = Math.asin(clamp(dot(direction, up), -1, 1));
+    const pitch = basePitch + slopePitch;
+    return normalize(add(mul(flatForward, Math.cos(pitch)), mul(up, Math.sin(pitch))));
+}
+
+function slopePitchForTravel(travelDirection: Vec3, surfaceNormal: Vec3, up: Vec3): number {
+    const normal = dot(surfaceNormal, up) < 0 ? mul(surfaceNormal, -1) : surfaceNormal;
+    const surfaceTravel = sub(travelDirection, mul(normal, dot(travelDirection, normal)));
+    if (length(surfaceTravel) < 0.000001) {
+        return 0;
+    }
+    const tangent = normalize(surfaceTravel);
+    return Math.asin(clamp(dot(tangent, up), -1, 1));
+}
+
+function smoothedNormal(current: Vec3 | null, next: Vec3, response: number, elapsedSeconds: number): Vec3 {
+    if (!current || response <= 0) {
+        return next;
+    }
+    const t = clamp(1 - Math.exp(-response * elapsedSeconds), 0, 1);
+    return normalize(lerp(current, next, t));
+}
+
+function degreesToRadians(degrees: number): number {
+    return degrees * Math.PI / 180;
+}
+
+function radiansToDegrees(radians: number): number {
+    return radians * 180 / Math.PI;
+}
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
+}
+
+function add(a: Vec3, b: Vec3): Vec3 {
+    return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+function sub(a: Vec3, b: Vec3): Vec3 {
+    return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function mul(v: Vec3, scalar: number): Vec3 {
+    return [v[0] * scalar, v[1] * scalar, v[2] * scalar];
+}
+
+function dot(a: Vec3, b: Vec3): number {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function cross(a: Vec3, b: Vec3): Vec3 {
+    return [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0]
+    ];
+}
+
+function length(v: Vec3): number {
+    return Math.hypot(v[0], v[1], v[2]);
+}
+
+function distance(a: Vec3, b: Vec3): number {
+    return length(sub(a, b));
+}
+
+function almostEqual(a: Vec3, b: Vec3, epsilon: number): boolean {
+    return Math.abs(a[0] - b[0]) <= epsilon &&
+        Math.abs(a[1] - b[1]) <= epsilon &&
+        Math.abs(a[2] - b[2]) <= epsilon;
+}
+
+function normalize(v: Vec3): Vec3 {
+    const len = length(v);
+    if (len === 0) {
+        return [0, 0, 0];
+    }
+    return [v[0] / len, v[1] / len, v[2] / len];
+}
+
+function perpendicular(up: Vec3): Vec3 {
+    const axis: Vec3 = Math.abs(up[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    return normalize(cross(up, axis));
+}
+
+function safePerpendicular(direction: Vec3, up: Vec3): Vec3 {
+    const right = cross(direction, up);
+    if (length(right) < 0.00001) {
+        return perpendicular(up);
+    }
+    return normalize(right);
+}
+
+function rotateAroundAxis(v: Vec3, axis: Vec3, radians: number): Vec3 {
+    const normalizedAxis = normalize(axis);
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const axisDot = dot(normalizedAxis, v);
+    return add(
+        add(mul(v, cos), mul(cross(normalizedAxis, v), sin)),
+        mul(normalizedAxis, axisDot * (1 - cos))
+    );
+}

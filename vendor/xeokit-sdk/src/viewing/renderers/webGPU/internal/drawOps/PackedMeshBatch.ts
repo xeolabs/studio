@@ -1,0 +1,44 @@
+import type {WebGPUBindGroupLike, WebGPUBufferLike} from "../../core";
+
+export interface PackedMeshBatch {
+  primitive: number;
+  hasNormals?: boolean;
+  triangleRenderClass?: "flat" | "pbr";
+  label: string;
+  segmentKey: string;
+  bufferPageKey?: string;
+  renderStateKey?: string;
+  topology?: "triangles" | "edges";
+  skipDepthPrepass?: boolean;
+  vertexBuffer: WebGPUBufferLike;
+  vertexBufferOffset?: number;
+  colorBuffer?: WebGPUBufferLike | null;
+  colorBufferOffset?: number;
+  uvBuffer?: WebGPUBufferLike | null;
+  uvBufferOffset?: number;
+  normalBuffer?: WebGPUBufferLike | null;
+  normalBufferOffset?: number;
+  materialBuffer?: WebGPUBufferLike | null;
+  materialBufferOffset?: number;
+  lineOtherVertexBuffer?: WebGPUBufferLike | null;
+  lineOtherVertexBufferOffset?: number;
+  positionDecodeBindGroup: WebGPUBindGroupLike;
+  colorBindGroup?: WebGPUBindGroupLike;
+  maskedShadowColorBindGroup?: WebGPUBindGroupLike;
+  vertexMetadataBuffer: WebGPUBufferLike;
+  vertexMetadataBufferOffset?: number;
+  indexBuffer: WebGPUBufferLike;
+  indexBufferOffset?: number;
+  indexFormat: "uint16" | "uint32";
+  indexCount: number;
+  firstIndex?: number;
+  indicesPageLocal?: boolean;
+  temporaryIndexBuffer?: boolean;
+  temporaryIndexBufferCreated?: boolean;
+  textureKey?: string;
+  splatDataBuffer?: WebGPUBufferLike;
+  splatIndexBuffer?: WebGPUBufferLike;
+  splatBindGroup?: WebGPUBindGroupLike;
+  splatCount?: number;
+  destroy(): void;
+}

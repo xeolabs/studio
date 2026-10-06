@@ -1,0 +1,156 @@
+import type {TonemapMode, TonemapParams} from "./TonemapParams";
+import type {View} from "./View";
+import {SDKErrorType, type SDKResult} from "../../base/core";
+
+/**
+ * Configures the HDR tonemap pass for a {@link viewing!viewer.View | View}.
+ *
+ * * Located at {@link Effects.tonemap}, which lives at {@link View.effects}.
+ * * Disabled by default. When disabled, the tonemap pass runs as an
+ *   identity copy. Applications that need HDR display mapping opt in
+ *   with `effects: {tonemap: {enabled: true}}`.
+ */
+export class Tonemap {
+
+  /** The View this Tonemap belongs to. */
+  public readonly view: View;
+  private _enabled: boolean;
+  private _exposure: number;
+  private _mode: TonemapMode;
+  private _sRGBEncode: boolean;
+  private _renderScale: number;
+  private _destroyed = false;
+
+  /** @private */
+  constructor(view: View, params: TonemapParams) {
+    this.view = view;
+    this._enabled = params.enabled === true;
+    this._exposure = params.exposure !== undefined ? params.exposure : 1.0;
+    this._mode = params.mode !== undefined ? params.mode : "none";
+    this._sRGBEncode = params.sRGBEncode !== undefined ? params.sRGBEncode === true : true;
+    this._renderScale = clampRenderScale(params.renderScale !== undefined ? params.renderScale : 1.0);
+  }
+
+      set enabled(value: boolean) {
+    const enabled = value === true;
+    if (this._enabled === enabled) return;
+    this._enabled = enabled;
+    this.view.needsRender();
+  }
+
+  get enabled(): boolean {
+    return this._enabled;
+  }
+
+  /**
+   * Returns true if Tonemap is currently possible given the View's
+   * state. The renderer is the authority on whether the GPU can
+   * actually run it.
+   * @private
+   */
+  get possible(): boolean {
+    return true;
+  }
+
+  /**
+   * Gets if Tonemap settings are currently applied.
+   *
+   * This is `true` when the component enabled state is
+   * in the component enabled state. When false,
+   * the tonemap pass runs as an identity copy.
+   */
+  get applied(): boolean {
+    return this._enabled;
+  }
+
+  /** Linear multiplier applied before tonemapping. Default `0.5`. */
+  get exposure(): number {
+    return this._exposure;
+  }
+
+  set exposure(value: number) {
+    if (value === undefined || value === null) value = 1.0;
+    if (this._exposure === value) return;
+    this._exposure = value;
+    this.view.needsRender();
+  }
+
+  /** Tonemap curve. Default `"aces"`. */
+  get mode(): TonemapMode {
+    return this._mode;
+  }
+
+  set mode(value: TonemapMode) {
+    if (value !== "none" && value !== "reinhard" && value !== "aces") return;
+    if (this._mode === value) return;
+    this._mode = value;
+    this.view.needsRender();
+  }
+
+  /** Whether to gamma-encode the final colour. Default `true`. */
+  get sRGBEncode(): boolean {
+    return this._sRGBEncode;
+  }
+
+  set sRGBEncode(value: boolean) {
+    value = value === true;
+    if (this._sRGBEncode === value) return;
+    this._sRGBEncode = value;
+    this.view.needsRender();
+  }
+
+  /** Supersampling factor (1.0 = off, 2.0 = 4× fragment work). Default `1.0`. */
+  get renderScale(): number {
+    return this._renderScale;
+  }
+
+  set renderScale(value: number) {
+    if (value === undefined || value === null) value = 1.0;
+    value = clampRenderScale(value);
+    if (this._renderScale === value) return;
+    this._renderScale = value;
+    this.view.needsRender();
+  }
+
+  /** Gets this Tonemap as JSON. */
+  toParams(): SDKResult<TonemapParams> {
+    return {
+      ok: true,
+      value: {
+        enabled: this._enabled,
+        exposure: this._exposure,
+        mode: this._mode,
+        sRGBEncode: this._sRGBEncode,
+        renderScale: this._renderScale
+      }
+    };
+  }
+
+  /** Configures this Tonemap. */
+  fromParams(params: TonemapParams): SDKResult<any> {
+    if (this._destroyed) {
+      return this.view.viewer.logError({
+        ok: false,
+        type: SDKErrorType.InvalidOperation,
+        error: "[Tonemap.fromParams] Tonemap has been destroyed."
+      });
+    }
+    if (params.exposure !== undefined) this.exposure = params.exposure;
+    if (params.mode !== undefined) this.mode = params.mode;
+    if (params.sRGBEncode !== undefined) this.sRGBEncode = params.sRGBEncode;
+    if (params.renderScale !== undefined) this.renderScale = params.renderScale;
+    return {ok: true, value: undefined};
+  }
+
+  /** @private */
+  destroy() {
+    this._destroyed = true;
+  }
+}
+
+function clampRenderScale(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1.0;
+  if (value < 0.5) return 0.5;
+  if (value > 4.0) return 4.0;
+  return value;
+}
