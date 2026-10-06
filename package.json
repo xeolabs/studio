@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages-clean && gh-pages -d dist --nojekyll",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.cjs"
@@ -27,6 +29,7 @@
     "@types/node": "^22.0.0",
     "@webgpu/types": "^0.1.64",
     "esbuild": "^0.25.0",
+    "gh-pages": "^6.3.0",
     "tsx": "^4.23.15",
     "typescript": "~5.7.3",
     "vite": "^7.1.9"

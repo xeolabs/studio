@@ -1,9 +1,8 @@
 # xeokit Studio
 
-A standalone Vue 3 and TypeScript workspace for viewing, inspecting, importing,
-and exporting 3D models with the unreleased xeokit v3 SDK. It includes Pinia,
-Element Plus, Dockview, the Scene/Data/Viewer/IFC explorers, diagnostics, and
-Sun Study. The bundled Duplex model opens at startup.
+xeokit Studio is a workspace for exploring 3D models and the information they
+contain. It brings visualization, inspection, and model exchange together to
+help users understand geometry, relationships, and properties.
 
 ## Run
 
