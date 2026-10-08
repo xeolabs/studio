@@ -252,6 +252,7 @@ export class ExplorerHostController {
       this.contextMenuParams.dataExplorer = explorer;
     } else if (source === "ifc") {
       const explorer = await IFCTreeView.create({
+        commands: this.runtime.commands,
         initialExpandDepth: 1,
         container,
         data: this.runtime.data,
@@ -268,6 +269,7 @@ export class ExplorerHostController {
       this.ifcTree = explorer;
     } else if (source === "ifcStoreys") {
       const explorer = await IFCStoreysView.create({
+        commands: this.runtime.commands,
         container,
         data: this.runtime.data,
         scene: this.runtime.scene,
@@ -283,6 +285,7 @@ export class ExplorerHostController {
       this.ifcStoreys = explorer;
     } else if (source === "ifcTypes") {
       const explorer = await IFCTypesView.create({
+        commands: this.runtime.commands,
         container,
         data: this.runtime.data,
         scene: this.runtime.scene,
@@ -334,10 +337,13 @@ export class ExplorerHostController {
     const keyboardCleanup = installExplorerKeyboard(container, session.focusedNodeId);
     const selectionStateCleanup = bindExplorerSelectionState(container, this.runtime.selectionService, getSelectionNode);
     const store = this.getStore(source)!;
+    const treeState = store.state as {activeNodeId?: string};
+    if (treeState.activeNodeId !== undefined) treeState.activeNodeId = session.activeNodeId;
     const sessionBinding = bindExplorerSession(container, store, session,
       callback => this.runtime!.vue.watch(() => store.state.revision, callback, {flush: "post"}),
       () => this.runtime!.vue.nextTick());
     this.cleanups[source] = () => {
+      if (treeState.activeNodeId !== undefined) session.activeNodeId = treeState.activeNodeId;
       sessionBinding.dispose();
       selectionStateCleanup();
       keyboardCleanup();

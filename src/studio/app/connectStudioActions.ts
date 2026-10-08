@@ -24,6 +24,8 @@ export function connectStudioActions(params: ConnectStudioActionsParams): void {
     tilesService,
     workspace
   } = params;
+  actions.importActions.cancelReplacement = () => importDialogService.cancelReplacement();
+  actions.importActions.replaceExisting = () => importDialogService.replaceExisting();
   actions.importActions.open = () => importDialogService.open();
   actions.importActions.close = () => importDialogService.close();
   actions.importActions.setDataSet = (dataSetId: string) => importDialogService.setDataSet(dataSetId);

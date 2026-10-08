@@ -625,3 +625,8 @@
             max-height: 60vh;
             overflow: auto;
         }
+
+.studio-unload-confirmation .el-message-box__message { overflow-wrap: anywhere; }
+@media (pointer: coarse) {
+    .studio-unload-confirmation .el-button { min-height: 44px; }
+}

@@ -1,6 +1,6 @@
 import type {Scene} from "@xeokit/sdk/model/scene";
 import {getSceneCollisionIndex} from "@xeokit/sdk/spatial/collision";
-import {CameraFlightAnimation} from "@xeokit/sdk/viewing/cameraFlight";
+import {StudioCameraFlight as CameraFlightAnimation} from "./StudioCameraFlight";
 import type {View} from "@xeokit/sdk/viewing/viewer";
 
 /** Camera operations are independent of which explorer panels happen to be mounted. */

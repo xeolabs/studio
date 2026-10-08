@@ -82,8 +82,17 @@ export function connectStudioServices(params: ConnectStudioServicesParams): Stud
     scene,
     data,
     state: importDialogState,
+    getModels: () => workspace.loadedModels || [],
+    beforeReplace: models => {
+      const scenes = new Set(models.map(model => model.sceneModelId));
+      const semantics = new Set(models.map(model => model.dataModelId));
+      const selected = workspace.selectedObjectDetails?.sceneObjectId;
+      if (selected && scenes.has(scene.objects[selected]?.model.id)) params.commands.execute("selection.clear");
+      const floor = data.objects[workspace.section.planFloorId];
+      if (floor?.models.some((model: any) => semantics.has(model.id))) params.commands.execute("section.return3D");
+    },
     onLoaded: (result) => {
-      workspace.setStatus(`Imported ${result.dataSet.label}: ${result.modelId}`);
+      workspace.setStatus(`Imported ${result.title || result.dataSet.label}`);
       workspace.appendOutput(workspace.status, "Importer");
       refreshStatusItems();
       setStatus("status", workspace.status);

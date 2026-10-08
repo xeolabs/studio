@@ -1,5 +1,6 @@
 import type {CommandRegistry} from "./CommandRegistry";
 import {isIfcSource, type IfcExplorerSource, type IfcExplorerStore, type IfcNodeTarget} from "../explorers/ifcExplorerTypes";
+import {isolateSubtree} from "../explorers/ifc/isolateSubtree";
 import {copyText} from "../ui/clipboard";
 
 export function registerIfcExplorerCommands(commands: CommandRegistry, getStore: (source: IfcExplorerSource) => IfcExplorerStore | null,
@@ -37,13 +38,7 @@ export function registerIfcExplorerCommands(commands: CommandRegistry, getStore:
           case "fit": store.fitObject(node); break;
           case "show": store.setEffect(node, "visible", true); break;
           case "hide": store.setEffect(node, "visible", false); break;
-          case "isolate": {
-            const ids = store.getNodeObjectIds(node);
-            if (!ids.length) return;
-            store.view.setObjectsVisible(Object.keys(store.view.objects), false);
-            store.setEffect(node, "visible", true);
-            break;
-          }
+          case "isolate": isolateSubtree(store, node); break;
           case "copyName": await copyText(node.title); break;
           case "copyId": await copyText(store.getObjectId(node) || node.id); break;
         }

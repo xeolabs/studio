@@ -230,7 +230,9 @@ export class FrameUniformManager {
     const far = Number(view.camera?.perspectiveProjection?.far ?? 1000000);
     const safeFar = Number.isFinite(far) && far > 0 ? far : 1000000;
     target[offset] = 2.0 / Math.log2(safeFar + 1.0);
-    target[offset + 1] = this._renderContext.renderConfigs.logDepth ? 1.0 : 0.0;
+    // Orthographic clip W is constant. Logarithmic depth would collapse all
+    // surfaces to one depth and make visibility depend on draw order.
+    target[offset + 1] = this._renderContext.renderConfigs.logDepth && view.camera?.projMatrix?.[11] !== 0 ? 1.0 : 0.0;
     target[offset + 2] = 0.0;
     target[offset + 3] = 0.0;
   }

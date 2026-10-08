@@ -1,3 +1,4 @@
+import type {ImportConflict} from "./importTransaction";
 import type {CoordinateSystemParams, SceneModelUpdateMode} from "@xeokit/sdk/model/scene";
 import {IMPORT_BASES} from "../importing/IMPORT_BASES";
 import {IMPORT_DATA_SETS} from "../importing/IMPORT_DATA_SETS";
@@ -43,6 +44,7 @@ export interface ImportDialogState {
   loadedModelId: string;
   plannedModelId: string;
   result: ImportResultSummary | null;
+  conflicts: ImportConflict[];
   slots: Record<string, ImportFileSlotState>;
   dataSets: ImportDataSet[];
   bases: ImportCoordSysBasis[];
@@ -55,7 +57,7 @@ export function createImportDialogState(): ImportDialogState {
     open: false, loading: false, sourceMode: "file", sources: [], dataSetId: "", formatOverride: false,
     coordinateMode: "source", basisId: "z-up", units: "meters", origin: [0, 0, 0], updateMode: "dynamic",
     frameAfterImport: true, statusText: "", errorText: "", errorDetails: "", sourceErrors: {},
-    loadedModelId: "", plannedModelId: "", result: null, slots: {},
+    loadedModelId: "", plannedModelId: "", result: null, conflicts: [], slots: {},
     dataSets: IMPORT_DATA_SETS, bases: IMPORT_BASES.filter(basis => !!basis.basis),
     unitsOptions: ["meters", "millimeters", "inches", "feet"],
     updateModes: [{id: "dynamic", label: "Dynamic"}, {id: "static", label: "Static"}],

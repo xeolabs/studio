@@ -6,7 +6,7 @@ export interface CommandShortcutInstallerParams {
 
 export function installCommandShortcuts(params: CommandShortcutInstallerParams): () => void {
   const onKeydown = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.repeat || event.isComposing || modalIsOpen() || document.querySelector(".studio-context-menu")) {
+    if (event.defaultPrevented || event.repeat || event.isComposing || modalIsOpen() || document.querySelector(".studio-context-menu, .studio-tool-flyout, .mobile-app-menu-content")) {
       return;
     }
     if ((event.target as HTMLElement)?.closest?.('[role="treeitem"]') && ["Home", "End", " "].includes(event.key)) return;

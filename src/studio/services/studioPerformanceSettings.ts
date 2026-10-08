@@ -5,7 +5,7 @@ export function createStudioPerformanceWebGPUSettings(): WebGPURendererCreatePar
   return {
     memoryConfigs: {maxViews: 2, frustumCulling: true},
     requestAdapterOptions: {powerPreference: "high-performance"},
-    renderConfigs: {...WEBGPU_RENDER_CONFIG_PROFILES.largeModel, logDepth: false, gpuTimestamps: false}
+    renderConfigs: {...WEBGPU_RENDER_CONFIG_PROFILES.largeModel, edges: true, logDepth: true, gpuTimestamps: false}
   };
 }
 

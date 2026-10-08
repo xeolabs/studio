@@ -69,4 +69,6 @@ export interface Renderer {
    * @returns An SDK result containing the encoded snapshot.
    */
   getSnapshot(view: View): SDKResult<string>;
+  /** Current rendered canvas for lightweight image overlays. Null if this view has no live canvas. Do not modify it. */
+  getRenderedCanvas?(view: View): HTMLCanvasElement | null;
 }

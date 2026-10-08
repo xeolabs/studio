@@ -68,6 +68,8 @@ export function connectRendererActions(params: ConnectRendererActionsParams): vo
       const picker = new RoutingPickStrategy(scene, result.renderer);
       setPicker(picker);
       setInputController(createViewerInputController({
+        planView: !!workspace.section?.planFloorId,
+        getToolMode: () => workspace.toolMode,
         picker,
         selectSceneObject,
         selectionService,

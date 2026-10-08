@@ -1150,6 +1150,11 @@ export class WebGLRenderer implements Renderer {
     return this._viewManager.getSnapshot(view);
   }
 
+  /** Live canvas for image overlays such as a pointer magnifier. The caller must not modify it. */
+  getRenderedCanvas(view: View): HTMLCanvasElement | null {
+    return this._viewManager?.getRenderedCanvas(view) ?? null;
+  }
+
   /**
    * Detaches the currently attached {@link viewing!viewer.Viewer | Viewer}, if any.
    *

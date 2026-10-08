@@ -3,6 +3,7 @@ const test = require("node:test");
 const path = require("node:path");
 const bundle = require("esbuild").buildSync({
   stdin: {contents: `
+    export {commitImport} from "./studio/services/importTransaction";
     export {Scene} from "@xeokit/sdk/model/scene";
     export {Data} from "@xeokit/sdk/model/data";
     export {ImportDialogService, createImportDialogState} from "./studio/services/ImportDialogService";
@@ -17,7 +18,7 @@ const bundle = require("esbuild").buildSync({
 }).outputFiles[0].text;
 const output = {exports: {}};
 new Function("module", "exports", "require", bundle)(output, output.exports, require);
-const {Scene, Data, ImportDialogService, createImportDialogState, importValidation, LoaderRegistry,
+const {commitImport, Scene, Data, ImportDialogService, createImportDialogState, importValidation, LoaderRegistry,
   CommandRegistry, registerImportResultCommands, createLazyLoaderRegistry} = output.exports;
 const file = name => new File(["model contents"], name);
 const ok = result => {assert.equal(result.ok, true, result.error); return result.value;};
@@ -210,4 +211,44 @@ test("invalid explicit coordinates block import, source mode ignores inactive ov
   service.setOrigin(0, "invalid"); assert.equal(service.canLoad(), false);
   assert.match(importValidation(state).message, /finite/);
   state.coordinateMode = "source"; assert.equal(service.canLoad(), true);
+});
+
+const triangleDocument = guid => ({schema_version: "1.0.0", meshes: [{mesh_id: 1, coordinates: [0,0,0, 1,0,0, 0,1,0], indices: [0,1,2]}],
+  elements: [{guid, mesh_id: 1, type: "IfcWall", vector: {x:0,y:0,z:0}, color: {r:120,g:150,b:180,a:255}}]});
+const importFile = (guid, name = "wall.bim") => new File([JSON.stringify(triangleDocument(guid))], name);
+test("duplicate imports are staged; Cancel keeps the original instance and Replace keeps unrelated models", async t => {
+  const scene = new Scene(), data = new Data(), state = createImportDialogState();
+  t.after(() => {scene.destroy(); data.destroy();});
+  const service = new ImportDialogService({scene, data, state, loaders: createLazyLoaderRegistry()});
+  service.addFiles([importFile("wall")]); await service.load();
+  const oldId = state.loadedModelId, old = scene.models[oldId];
+  assert.equal(state.result.label, "wall.bim");
+  service.reset(); service.addFiles([importFile("other", "other.bim")]); await service.load();
+  const unrelated = scene.models[state.loadedModelId];
+  service.reset(); service.addFiles([importFile("wall", "updated.bim")]); await service.load();
+  assert.equal(state.result, null); assert.equal(state.conflicts.length, 1);
+  assert.equal(state.conflicts[0].title, "wall.bim"); assert.equal(scene.models[oldId], old);
+  assert.equal(Object.keys(scene.models).length, 2); assert.equal(service.canLoad(), false);
+  service.cancelReplacement(); assert.equal(scene.models[oldId], old); assert.equal(service.canLoad(), true);
+  await service.load(); service.replaceExisting();
+  assert.equal(state.conflicts.length, 0); assert.equal(state.errorText, "");
+  assert.equal(state.result.label, "updated.bim"); assert.equal(scene.models[oldId], undefined);
+  assert.equal(data.models[oldId], undefined); assert.equal(scene.models[unrelated.id], unrelated);
+  assert.equal(Object.keys(scene.models).length, 2); assert.equal(Object.keys(data.models).length, 2);
+  assert.equal(Object.keys(scene.models[state.loadedModelId].objects).length, 1);
+});
+test("invalid staged geometry preserves the original and failed commit restores geometry and metadata", async t => {
+  const scene = new Scene(), data = new Data(), state = createImportDialogState();
+  t.after(() => {scene.destroy(); data.destroy();});
+  const service = new ImportDialogService({scene, data, state, loaders: createLazyLoaderRegistry()});
+  service.addFiles([importFile("wall")]); await service.load();
+  const id = state.loadedModelId, old = scene.models[id], sceneParams = ok(old.toParams()), dataParams = ok(data.models[id].toParams());
+  service.reset(); service.addFiles([new File(['{broken'], 'broken.bim')]); await service.load();
+  assert.ok(state.errorText); assert.equal(scene.models[id], old); assert.equal(state.conflicts.length, 0);
+  const create = data.createModel.bind(data); let failed = false;
+  data.createModel = params => {if (!failed) {failed = true; return {ok:false,error:'simulated commit failure'};} return create(params);};
+  assert.throws(() => commitImport(scene, data, {modelId:'replacement', title:'Replacement', scene:sceneParams, data:dataParams},
+    [{sceneModelId:id, dataModelId:id, title:'Wall'}]), /simulated commit failure/);
+  assert.ok(scene.models[id]); assert.ok(data.models[id]); assert.equal(scene.models.replacement, undefined);
+  assert.equal(Object.keys(scene.models[id].objects).length, 1); assert.equal(Object.keys(data.models[id].objects).length, 1);
 });

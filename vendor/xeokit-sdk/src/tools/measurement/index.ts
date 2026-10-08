@@ -76,3 +76,4 @@
 
 export * as distance from "./distance";
 export * as angle from "./angle";
+export * from "./PointerLens";

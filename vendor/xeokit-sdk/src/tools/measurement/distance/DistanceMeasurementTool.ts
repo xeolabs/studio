@@ -93,6 +93,10 @@ export class DistanceMeasurementTool {
   private readonly _htmlOverlay: HTMLDivElement;
 
   private _unsubCamera: (() => void) | null = null;
+  private _unsubProjection: (() => void) | null = null;
+  private _unsubBoundary: (() => void) | null = null;
+  private readonly _formatLength?: (length: number) => string;
+  private readonly _onLayout = () => this.update();
   private _resizeObserver: ResizeObserver | null = null;
 
   private _nextId = 1;
@@ -116,6 +120,7 @@ export class DistanceMeasurementTool {
     this.view = params.view;
     this.picker = params.picker ?? new BVHPickStrategy(params.view.viewer.scene);
     this.defaultColor = params.defaultColor ?? "#FFA500";
+    this._formatLength = params.formatLength;
     this._visible = params.visible !== false;
     this.onMeasurementsChanged = new EventEmitter(
       new EventDispatcher<DistanceMeasurementTool, void>(),
@@ -126,11 +131,13 @@ export class DistanceMeasurementTool {
     // ── Overlay root (covers the canvas; pointer-events none so
     //    clicks fall through to the View) ──────────────────────────
     this._root = document.createElement("div");
+    this._root.className = "xeokit-distance-measurements";
     Object.assign(this._root.style, {
-      position:      "absolute",
+      position:      this._container === document.body ? "fixed" : "absolute",
       pointerEvents: "none",
       userSelect:    "none",
-      zIndex:        "150000",
+      zIndex:        String(params.zIndex ?? 150000),
+      overflow:      "hidden",
       display:       this._visible ? "block" : "none",
     });
 
@@ -164,6 +171,10 @@ export class DistanceMeasurementTool {
     if (events?.onCameraViewMatrixUpdated?.subscribe) {
       this._unsubCamera = events.onCameraViewMatrixUpdated.subscribe(() => this._updateAll());
     }
+    this._unsubProjection = events?.onCameraProjMatrixUpdated?.subscribe(() => this._updateAll()) ?? null;
+    this._unsubBoundary = this.view.onBoundary?.subscribe(() => this.update()) ?? null;
+    window.addEventListener("scroll", this._onLayout, true);
+    window.addEventListener("resize", this._onLayout);
     if (typeof ResizeObserver !== "undefined") {
       this._resizeObserver = new ResizeObserver(() => {
         this._syncOverlayBounds();
@@ -196,7 +207,7 @@ export class DistanceMeasurementTool {
     }
     const m = new DistanceMeasurement(
       id,
-      { color: this.defaultColor, ...params },
+      { color: this.defaultColor, formatLength: this._formatLength, ...params },
       this._svg,
       this._htmlOverlay,
     );
@@ -244,6 +255,13 @@ export class DistanceMeasurementTool {
 
   // ── Visibility + lifecycle ───────────────────────────────────────
 
+  /** Reposition the overlay and refresh labels after endpoint, formatter or layout changes. */
+  update(): void {
+    if (this._destroyed) return;
+    this._syncOverlayBounds();
+    this._updateAll();
+  }
+
   get visible(): boolean { return this._visible && !this._destroyed; }
 
   /** True once {@link destroy} has run. */
@@ -287,6 +305,10 @@ export class DistanceMeasurementTool {
     }
 
     this.clear();
+    this._unsubProjection?.();
+    this._unsubBoundary?.();
+    window.removeEventListener("scroll", this._onLayout, true);
+    window.removeEventListener("resize", this._onLayout);
     this._root.parentNode?.removeChild(this._root);
 
     if (DistanceMeasurementTool._instances.get(this.view) === this) {
@@ -319,9 +341,10 @@ export class DistanceMeasurementTool {
     // clip-space = projMatrix * view.
     const cx = m[0]*vx + m[4]*vy + m[8] *vz + m[12]*vw;
     const cy = m[1]*vx + m[5]*vy + m[9] *vz + m[13]*vw;
+    const cz = m[2]*vx + m[6]*vy + m[10]*vz + m[14]*vw;
     const cw = m[3]*vx + m[7]*vy + m[11]*vz + m[15]*vw;
 
-    if (cw === 0) {
+    if (![cx, cy, cz, cw].every(Number.isFinite) || cw === 0) {
       out[0] = 0; out[1] = 0; out[2] = -1;
       return;
     }
@@ -330,7 +353,7 @@ export class DistanceMeasurementTool {
 
     out[0] = (ndcX + 1) * 0.5 * cssSize.width;
     out[1] = (1 - ndcY) * 0.5 * cssSize.height;
-    out[2] = cw;
+    out[2] = cz < -cw || cz > cw ? -1 : cw;
   }
 
   /**
@@ -340,7 +363,7 @@ export class DistanceMeasurementTool {
    */
   private _syncOverlayBounds(): void {
     const canvas = this.view.htmlElement;
-    const containerRect = this._container.getBoundingClientRect();
+    const containerRect = this._container === document.body ? {left: 0, top: 0} : this._container.getBoundingClientRect();
     const canvasRect    = canvas.getBoundingClientRect();
     this._root.style.left   = `${canvasRect.left - containerRect.left}px`;
     this._root.style.top    = `${canvasRect.top  - containerRect.top}px`;

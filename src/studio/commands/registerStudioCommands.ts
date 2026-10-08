@@ -491,9 +491,9 @@ export function registerStudioCommands(params: RegisterStudioCommandsParams): vo
     category: "Edit: Inspector",
     run: () => setInspectorContext({
       source: "data",
-      title: "Data Explorer",
+      title: "Building",
       kind: "Explorer",
-      detail: "Select a node in the Data, Scene or Viewer explorer to inspect it here."
+      detail: "Tap an element in the model, or choose one in Explore or Floors, to see its properties."
     })
   });
   for (const activityId of ALL_ACTIVITY_IDS) {
@@ -512,9 +512,7 @@ export function registerStudioCommands(params: RegisterStudioCommandsParams): vo
     shortcut: "Ctrl+Alt+E",
     run: () => {
       workspace.setActiveActivity("explorer");
-      openToolWindow("data");
-      openToolWindow("scene");
-      openToolWindow("viewerExplorer");
+      openToolWindow(workspace.explorePanelId || "ifcStructure");
     }
   });
   commands.register({

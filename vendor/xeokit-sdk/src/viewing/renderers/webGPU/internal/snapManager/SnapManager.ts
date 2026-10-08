@@ -49,6 +49,30 @@ interface SnapCandidate {
   canvasPos: Vec2;
 }
 
+interface SnapSearchParams {
+  view: View;
+  canvasPos: Vec2;
+  snapRadius: number;
+  wantVertex: boolean;
+  wantEdge: boolean;
+  pickInvisible: boolean;
+}
+
+interface DepthTriangle {
+  meshState: RendererMesh;
+  index: number;
+  canvasA: Vec2;
+  canvasB: Vec2;
+  canvasC: Vec2;
+  depthA: number;
+  depthB: number;
+  depthC: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
 interface GPUVertexSnapMeshHit {
   meshState: RendererMesh;
   globalSlot: number;
@@ -166,13 +190,14 @@ export class SnapManager {
       };
     }
 
-    const best = this._findMeshSnapCandidate(gpuHit.meshState, {
+    const best = this._findSnapCandidate({
       view,
       canvasPos: pickParams.canvasPos,
+      snapRadius,
       wantVertex: true,
       wantEdge: false,
       pickInvisible: false
-    });
+    }, [gpuHit.meshState]);
     if (!best || best.distanceSq > snapRadius * snapRadius) {
       return {
         ok: true,
@@ -224,13 +249,14 @@ export class SnapManager {
       };
     }
 
-    const best = this._findMeshSnapCandidate(gpuHit.meshState, {
+    const best = this._findSnapCandidate({
       view,
       canvasPos: pickParams.canvasPos,
+      snapRadius,
       wantVertex: pickParams.snapToVertex === true,
       wantEdge: true,
       pickInvisible: false
-    });
+    }, [gpuHit.meshState]);
     if (!best || best.distanceSq > snapRadius * snapRadius) {
       return {
         ok: true,
@@ -259,50 +285,45 @@ export class SnapManager {
     this._snapBufferCache.destroy();
   }
 
-  private _findSnapCandidate(params: {
-    view: View;
-    canvasPos: Vec2;
-    snapRadius: number;
-    wantVertex: boolean;
-    wantEdge: boolean;
-    pickInvisible: boolean;
-  }): SnapCandidate | null {
-    const meshStates = this._meshManager.meshStates;
-    let best: SnapCandidate | null = null;
-    const maxDistanceSq = params.snapRadius * params.snapRadius;
+  private _findSnapCandidate(
+    params: SnapSearchParams,
+    meshStates = this._meshManager.meshStates
+  ): SnapCandidate | null {
+    const candidates: SnapCandidate[] = [];
 
     for (let i = 0, len = meshStates.length; i < len; i++) {
       const meshState = meshStates[i];
       if (!this._meshManager.isMeshPickableInView(meshState, params.view, params.pickInvisible)) {
         continue;
       }
-      const candidate = this._findMeshSnapCandidate(meshState, params);
-      if (!candidate || candidate.distanceSq > maxDistanceSq) {
+      this._collectMeshSnapCandidates(meshState, params, candidates);
+    }
+
+    // Search nearest first, preferring vertices at equal distance. Visibility is
+    // expensive, so stop as soon as a visible candidate is found.
+    candidates.sort((a, b) => a.distanceSq - b.distanceSq ||
+      Number(b.snappedToVertex) - Number(a.snappedToVertex) || a.depth - b.depth);
+    let depthTriangles: DepthTriangle[] | undefined;
+    for (const candidate of candidates) {
+      if (isWorldPosClipped(params.view, candidate.worldPos, this._isCandidateClippable(candidate, params.view))) {
         continue;
       }
-      if (
-        !best ||
-        candidate.distanceSq < best.distanceSq ||
-        (candidate.distanceSq === best.distanceSq && candidate.snappedToVertex && !best.snappedToVertex) ||
-        (candidate.distanceSq === best.distanceSq && candidate.depth < best.depth)
-      ) {
-        best = candidate;
+      // This snapshot belongs to one pick only: camera, geometry, visibility and
+      // clipping can all change before the next pick. Project the scene once,
+      // retaining only triangles overlapping the cursor's snap neighborhood.
+      depthTriangles ??= this._collectDepthTriangles(params);
+      if (this._isCandidateVisible(candidate, params, depthTriangles)) {
+        return candidate;
       }
     }
-
-    return best;
+    return null;
   }
 
-  private _findMeshSnapCandidate(
+  private _collectMeshSnapCandidates(
     meshState: RendererMesh,
-    params: {
-      view: View;
-      canvasPos: Vec2;
-      wantVertex: boolean;
-      wantEdge: boolean;
-      pickInvisible: boolean;
-    }
-  ): SnapCandidate | null {
+    params: SnapSearchParams,
+    candidates: SnapCandidate[]
+  ): void {
     const positions = meshState.geometryState.positions;
     const indices = meshState.geometryState.indices;
     const edgeIndices = meshState.geometryState.edgeIndices;
@@ -312,7 +333,7 @@ export class SnapManager {
       tempModelViewMatrix,
       tempModelViewProjectionMatrix
     );
-    let best: SnapCandidate | null = null;
+    const maxDistanceSq = params.snapRadius * params.snapRadius;
 
     if (params.wantVertex) {
       const visitedVertices = new Set<number>();
@@ -324,11 +345,11 @@ export class SnapManager {
         visitedVertices.add(vertexIndex);
         const offset = vertexIndex * 3;
         const depth = this._projectVertex(matrix, positions, offset, params.view, tempCanvasA);
-        if (depth === null) {
+        if (depth === null || this._distanceSq(params.canvasPos, tempCanvasA) > maxDistanceSq) {
           continue;
         }
         const candidate = this._makeVertexCandidate(meshState, params.view, positions, offset, tempCanvasA, depth, params.canvasPos);
-        best = this._chooseVisibleSnapCandidate(best, candidate, params);
+        candidates.push(candidate);
       }
     }
 
@@ -341,11 +362,12 @@ export class SnapManager {
         if (depthA === null || depthB === null) {
           continue;
         }
-        best = this._chooseVisibleSnapCandidate(best, this._makeEdgeCandidate(meshState, params.view, positions, offsetA, offsetB, tempCanvasA, tempCanvasB, depthA, depthB, params.canvasPos), params);
+        const candidate = this._makeEdgeCandidate(meshState, params.view, positions, offsetA, offsetB, tempCanvasA, tempCanvasB, depthA, depthB, params.canvasPos, maxDistanceSq);
+        if (candidate) {
+          candidates.push(candidate);
+        }
       }
     }
-
-    return best;
   }
 
   private _makeVertexCandidate(
@@ -383,11 +405,16 @@ export class SnapManager {
     canvasB: Vec2,
     depthA: number,
     depthB: number,
-    pickCanvasPos: Vec2
-  ): SnapCandidate {
+    pickCanvasPos: Vec2,
+    maxDistanceSq: number
+  ): SnapCandidate | null {
     const t = this._closestSegmentT(pickCanvasPos, canvasA, canvasB);
     tempSnappedCanvas[0] = canvasA[0] + (canvasB[0] - canvasA[0]) * t;
     tempSnappedCanvas[1] = canvasA[1] + (canvasB[1] - canvasA[1]) * t;
+    const distanceSq = this._distanceSq(pickCanvasPos, tempSnappedCanvas);
+    if (distanceSq > maxDistanceSq) {
+      return null;
+    }
     tempLocalPos[0] = positions[offsetA] + (positions[offsetB] - positions[offsetA]) * t;
     tempLocalPos[1] = positions[offsetA + 1] + (positions[offsetB + 1] - positions[offsetA + 1]) * t;
     tempLocalPos[2] = positions[offsetA + 2] + (positions[offsetB + 2] - positions[offsetA + 2]) * t;
@@ -396,45 +423,12 @@ export class SnapManager {
       sceneMesh: meshState.mesh,
       snappedToVertex: false,
       snappedToEdge: true,
-      distanceSq: this._distanceSq(pickCanvasPos, tempSnappedCanvas),
+      distanceSq,
       depth: depthA + (depthB - depthA) * t,
       localPos: createVec3Float64(tempLocalPos),
       worldPos: createVec3Float64(worldPos),
       canvasPos: createVec2Float64(tempSnappedCanvas)
     };
-  }
-
-  private _chooseSnapCandidate(best: SnapCandidate | null, candidate: SnapCandidate): SnapCandidate {
-    if (!best) {
-      return candidate;
-    }
-    if (candidate.distanceSq < best.distanceSq) {
-      return candidate;
-    }
-    if (candidate.distanceSq === best.distanceSq && candidate.snappedToVertex && !best.snappedToVertex) {
-      return candidate;
-    }
-    if (candidate.distanceSq === best.distanceSq && candidate.depth < best.depth) {
-      return candidate;
-    }
-    return best;
-  }
-
-  private _chooseVisibleSnapCandidate(
-    best: SnapCandidate | null,
-    candidate: SnapCandidate,
-    params: {
-      view: View;
-      pickInvisible: boolean;
-    }
-  ): SnapCandidate | null {
-    if (isWorldPosClipped(params.view, candidate.worldPos, this._isCandidateClippable(candidate, params.view))) {
-      return best;
-    }
-    if (!this._isCandidateVisible(candidate, params)) {
-      return best;
-    }
-    return this._chooseSnapCandidate(best, candidate);
   }
 
   private _isCandidateClippable(candidate: SnapCandidate, view: View): boolean {
@@ -450,21 +444,20 @@ export class SnapManager {
     params: {
       view: View;
       pickInvisible: boolean;
-    }
+    },
+    depthTriangles: DepthTriangle[]
   ): boolean {
-    const nearestDepth = this._findNearestDepthAtCanvas(candidate.canvasPos, params);
+    const nearestDepth = this._findNearestDepthAtCanvas(candidate.canvasPos, params, depthTriangles);
     return nearestDepth === null || candidate.depth <= nearestDepth + SNAP_DEPTH_EPSILON;
   }
 
-  private _findNearestDepthAtCanvas(
-    canvasPos: Vec2,
-    params: {
-      view: View;
-      pickInvisible: boolean;
-    }
-  ): number | null {
+  private _collectDepthTriangles(params: SnapSearchParams): DepthTriangle[] {
     const meshStates = this._meshManager.meshStates;
-    let nearestDepth = Number.POSITIVE_INFINITY;
+    const triangles: DepthTriangle[] = [];
+    const minX = params.canvasPos[0] - params.snapRadius;
+    const maxX = params.canvasPos[0] + params.snapRadius;
+    const minY = params.canvasPos[1] - params.snapRadius;
+    const maxY = params.canvasPos[1] + params.snapRadius;
 
     for (let meshIndex = 0, meshLen = meshStates.length; meshIndex < meshLen; meshIndex++) {
       const meshState = meshStates[meshIndex];
@@ -490,23 +483,58 @@ export class SnapManager {
         if (depthA === null || depthB === null || depthC === null) {
           continue;
         }
-        const barycentric = this._getBarycentricCanvasCoords(canvasPos, tempCanvasA, tempCanvasB, tempCanvasC);
-        if (!barycentric) {
+        const triangleMinX = Math.min(tempCanvasA[0], tempCanvasB[0], tempCanvasC[0]);
+        const triangleMaxX = Math.max(tempCanvasA[0], tempCanvasB[0], tempCanvasC[0]);
+        const triangleMinY = Math.min(tempCanvasA[1], tempCanvasB[1], tempCanvasC[1]);
+        const triangleMaxY = Math.max(tempCanvasA[1], tempCanvasB[1], tempCanvasC[1]);
+        if (triangleMaxX < minX || triangleMinX > maxX || triangleMaxY < minY || triangleMinY > maxY) {
           continue;
         }
-        const depth = barycentric[0] * depthA + barycentric[1] * depthB + barycentric[2] * depthC;
-        tempLocalPos[0] = positions[offsetA] * barycentric[0] + positions[offsetB] * barycentric[1] + positions[offsetC] * barycentric[2];
-        tempLocalPos[1] = positions[offsetA + 1] * barycentric[0] + positions[offsetB + 1] * barycentric[1] + positions[offsetC + 1] * barycentric[2];
-        tempLocalPos[2] = positions[offsetA + 2] * barycentric[0] + positions[offsetB + 2] * barycentric[1] + positions[offsetC + 2] * barycentric[2];
-        if (isWorldPosClipped(params.view, this._getWorldPosition(meshState, tempLocalPos), this._meshManager.isMeshClippableInView(meshState, params.view))) {
-          continue;
-        }
-        if (depth < nearestDepth) {
-          nearestDepth = depth;
-        }
+        triangles.push({
+          meshState, index: i,
+          canvasA: createVec2Float64(tempCanvasA),
+          canvasB: createVec2Float64(tempCanvasB),
+          canvasC: createVec2Float64(tempCanvasC),
+          depthA, depthB, depthC,
+          minX: triangleMinX, maxX: triangleMaxX,
+          minY: triangleMinY, maxY: triangleMaxY
+        });
       }
     }
+    return triangles;
+  }
 
+  private _findNearestDepthAtCanvas(
+    canvasPos: Vec2,
+    params: {view: View; pickInvisible: boolean},
+    triangles: DepthTriangle[]
+  ): number | null {
+    let nearestDepth = Number.POSITIVE_INFINITY;
+    for (const triangle of triangles) {
+      if (canvasPos[0] < triangle.minX || canvasPos[0] > triangle.maxX ||
+          canvasPos[1] < triangle.minY || canvasPos[1] > triangle.maxY) {
+        continue;
+      }
+      const barycentric = this._getBarycentricCanvasCoords(canvasPos, triangle.canvasA, triangle.canvasB, triangle.canvasC);
+      if (!barycentric) {
+        continue;
+      }
+      const depth = barycentric[0] * triangle.depthA + barycentric[1] * triangle.depthB + barycentric[2] * triangle.depthC;
+      if (depth >= nearestDepth) {
+        continue;
+      }
+      const meshState = triangle.meshState;
+      const {positions, indices} = meshState.geometryState;
+      const offsetA = indices[triangle.index] * 3;
+      const offsetB = indices[triangle.index + 1] * 3;
+      const offsetC = indices[triangle.index + 2] * 3;
+      tempLocalPos[0] = positions[offsetA] * barycentric[0] + positions[offsetB] * barycentric[1] + positions[offsetC] * barycentric[2];
+      tempLocalPos[1] = positions[offsetA + 1] * barycentric[0] + positions[offsetB + 1] * barycentric[1] + positions[offsetC + 1] * barycentric[2];
+      tempLocalPos[2] = positions[offsetA + 2] * barycentric[0] + positions[offsetB + 2] * barycentric[1] + positions[offsetC + 2] * barycentric[2];
+      if (!isWorldPosClipped(params.view, this._getWorldPosition(meshState, tempLocalPos), this._meshManager.isMeshClippableInView(meshState, params.view))) {
+        nearestDepth = depth;
+      }
+    }
     return Number.isFinite(nearestDepth) ? nearestDepth : null;
   }
 

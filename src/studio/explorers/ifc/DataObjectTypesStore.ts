@@ -9,7 +9,7 @@ import {summarizeVisibility} from "../tree/visibilitySummary";
 import {collapseAABB3, createAABB3Float64, expandAABB3Point3, type AABB3} from "@xeokit/sdk/base/math/boundaries";
 import {transformPoint3} from "@xeokit/sdk/base/math/matrix";
 import type {Scene} from "@xeokit/sdk/model/scene";
-import {CameraFlightAnimation} from "@xeokit/sdk/viewing/cameraFlight";
+import {StudioCameraFlight as CameraFlightAnimation} from "../../services/StudioCameraFlight";
 import type {Viewer, View, ViewObjectStyleBinChangedEvent} from "@xeokit/sdk/viewing/viewer";
 import type {DataObjectTreeEffectId, DataObjectTreeNodeState, DataObjectTreeState} from "./DataObjectTreeStore";
 
@@ -37,7 +37,8 @@ export class DataObjectTypesStore {
   state: DataObjectTreeState = {
     roots: [],
     busy: false,
-    revision: 0
+    revision: 0,
+    activeNodeId: ""
   };
 
   private readonly _nodes = new Map<string, DataObjectTreeNodeState>();

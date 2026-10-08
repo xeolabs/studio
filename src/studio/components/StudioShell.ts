@@ -1,3 +1,4 @@
+import {createSavedViewsDialog} from "./dialogs/SavedViewsDialog";
 import type {CommandRegistry} from "../commands/CommandRegistry";
 import type {ContextMenuService} from "../services/ContextMenuService";
 import {createBottomPanelComponent} from "./shell/BottomPanel";
@@ -27,6 +28,7 @@ export function createStudioShellComponent(Vue: any, params: StudioShellParams) 
   return {
     name: "StudioViewerExample",
     components: {
+      SavedViewsDialog: createSavedViewsDialog(Vue),
       StudioBottomPanel: createBottomPanelComponent(Vue, params),
       StudioCommandPalette: createCommandPaletteComponent(Vue, params),
       StudioContextMenuLayer: createContextMenuLayerComponent(Vue, params),
@@ -36,7 +38,10 @@ export function createStudioShellComponent(Vue: any, params: StudioShellParams) 
     },
     setup() {
       const appShellStyle = Vue.computed(() => ({
-        "--studio-bottom-panel-height": params.workspace.bottomPanelOpen ? `${params.workspace.bottomPanelHeight}px` : "28px"
+        "--studio-bottom-panel-height": params.workspace.bottomPanelOpen
+          ? `min(${params.workspace.bottomPanelHeight}px, 45%)`
+          : "0px",
+        "--studio-status-height": params.workspace.bottomPanelOpen ? "24px" : "0px"
       }));
       let cleanupShortcuts: (() => void) | null = null;
       Vue.onMounted(() => {
@@ -46,16 +51,17 @@ export function createStudioShellComponent(Vue: any, params: StudioShellParams) 
         cleanupShortcuts?.();
         cleanupShortcuts = null;
       });
-      return {appShellStyle};
+      return {appShellStyle, workspace: params.workspace};
     },
     template: `
-      <main class="app-shell" :style="appShellStyle">
+      <main class="app-shell" :style="appShellStyle" :data-layout="workspace.layoutMode">
         <StudioMenuBar/>
         <StudioWorkspaceHost/>
-        <StudioBottomPanel/>
-        <StudioStatusBar/>
+        <StudioBottomPanel v-show="workspace.bottomPanelOpen"/>
+        <StudioStatusBar v-show="workspace.bottomPanelOpen"/>
         <StudioContextMenuLayer/>
         <StudioCommandPalette/>
+        <SavedViewsDialog/>
         <ExportDialogPanel/>
         <ImportDialogPanel/>
       </main>

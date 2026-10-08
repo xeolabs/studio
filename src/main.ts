@@ -1,3 +1,15 @@
+import {SavedViewsService} from "./studio/services/SavedViewsService";
+import {captureViewThumbnail} from "./studio/services/captureViewThumbnail";
+import {registerSavedViewsCommands} from "./studio/commands/registerSavedViewsCommands";
+import {ViewHistoryService} from "./studio/services/ViewHistoryService";
+import {registerViewerTools} from "./studio/commands/registerViewerTools";
+import {LoadedModelsService} from "./studio/services/LoadedModelsService";
+import {MeasurementService} from "./studio/services/MeasurementService";
+import {registerMeasurementCommands} from "./studio/commands/registerMeasurementCommands";
+import {registerModelCommands} from "./studio/commands/registerModelCommands";
+import {PlanLabelsService} from "./studio/services/PlanLabelsService";
+import {SectionViewService} from "./studio/services/SectionViewService";
+import {registerSectionCommands} from "./studio/commands/registerSectionCommands";
 import "element-plus/dist/index.css";
 import "dockview-vue/dist/styles/dockview.css";
 import "./styles.css";
@@ -37,6 +49,7 @@ import {loadStudioUiRuntime} from "./studio/loadStudioUiRuntime";
 import {type InspectorContext} from "./studio/state/createWorkspaceStore";
 import {type RendererMode} from "./studio/services/RendererService";
 import {createDeleteConfirmation} from "./studio/ui/confirmDelete";
+import {createUnloadConfirmation} from "./studio/ui/confirmUnload";
 import {
   failExample,
   setStatus
@@ -248,6 +261,7 @@ async function main() {
   });
   picker = new RoutingPickStrategy(scene, renderer);
   inputController = createViewerInputController({
+    getToolMode: () => workspace.toolMode,
     picker,
     selectSceneObject,
     selectionService,
@@ -275,8 +289,61 @@ async function main() {
     vue: Vue
   });
   explorerNavigation.connect({data, scene, view});
+  const viewHistory = new ViewHistoryService(view, workspace.history, commands);
+  registerViewerTools(commands, view, workspace, viewHistory);
+  const sectionViewService = new SectionViewService({data, scene, view, state: workspace.section, getInputController: () => inputController});
+  const planLabelsService = new PlanLabelsService({data, scene, view, state: workspace.section, section: sectionViewService, selection: selectionService});
+  const stopPlanLabelsWatch = Vue.watch(() => [workspace.section.labelsEnabled, workspace.section.labelDensity, workspace.section.planFloorId], () => planLabelsService.schedule());
+  registerSectionCommands(commands, sectionViewService, workspace.section);
+  const measurementService = new MeasurementService({scene, view, state: workspace.measurements, section: workspace.section,
+    getPicker: () => picker, getRenderer: () => renderer, getController: () => inputController,
+    showFloorPlan: (id, cutHeight) => {
+      if (workspace.section.planFloorId !== id) sectionViewService.showFloorPlan(id);
+      if (cutHeight !== undefined) sectionViewService.setPlanCutHeight(cutHeight);
+    },
+    returnTo3D: () => sectionViewService.returnTo3D(),
+    isActive: () => workspace.toolMode === "measure", isSwitching: () => workspace.rendererSwitching});
+  registerMeasurementCommands(commands, measurementService, workspace);
+  const stopMeasurementsWatch = Vue.watch(() => [workspace.toolMode, workspace.measurements.unit, workspace.measurements.lensEnabled,
+    workspace.measurements.visible, workspace.section.planFloorId, workspace.rendererSwitching], () => measurementService.sync());
+  const loadedModelsService = new LoadedModelsService({
+    scene, data, view, state: workspace, selection: selectionService, section: sectionViewService,
+    initialModels: [{id: "bundled:duplex", title: "Duplex", sceneModelId: sceneModel.id, dataModelId: dataModel.id}],
+    isBusy: () => importDialogState.loading || exportDialogState.loading || workspace.rendererSwitching
+      || sceneHealthPanelState.applying,
+    onChanged: () => {
+      const models = workspace.loadedModels;
+      if (!models.some(model => model.objectCount) && workspace.toolMode === "measure") workspace.toolMode = "select";
+      workspace.setProjectName(models.length ? models[0].title + (models.length > 1 ? ` +${models.length - 1}` : "") : "No models loaded");
+      refreshStatusItems(selectionService.selectedSceneObjectId ? 1 : 0);
+    },
+    onUnloaded: model => {
+      planLabelsService.schedule();
+      exportDialogService.refreshModels();
+      if ([model.sceneModelId, model.dataModelId].includes(importDialogState.result?.modelId || "")) {
+        importDialogState.result = null;
+        importDialogState.loadedModelId = "";
+        importDialogState.statusText = "Model unloaded. You can import it again.";
+      }
+      if (!selectionService.selectedSceneObjectId) workspace.setInspectorContext({
+        source: "data", title: "Properties", kind: "Selection", detail: "Choose an element to see its properties."
+      });
+      workspace.setStatus(`Unloaded ${model.title}`);
+      workspace.appendOutput(workspace.status, "Models");
+      workspace.appendEvent("models", "unloaded", workspace.status);
+    }
+  });
+  registerModelCommands(commands, loadedModelsService, createUnloadConfirmation(ElementPlus));
+  const savedViewsService = new SavedViewsService({scene, view, section: sectionViewService, state: workspace.savedViews,
+    getStorage: () => window.localStorage, getController: () => inputController,
+    captureThumbnail: () => captureViewThumbnail(renderer, view),
+    beforeRestore: () => {workspace.toolMode = "select"; measurementService.sync(); selectionService.clear();},
+    isBusy: () => importDialogState.loading || workspace.rendererSwitching || sceneHealthPanelState.applying});
+  registerSavedViewsCommands(commands, savedViewsService, workspace.savedViews);
   const viewportCommandsCleanup = registerViewportCommands({
+    sectionView: {isPlan: () => !!workspace.section.planFloorId, fitPlan: () => sectionViewService.fitPlan(), returnTo3D: () => sectionViewService.returnTo3D()},
     commands,
+    workspace,
     dataExplorer: explorerHostController.dataExplorer,
     scene,
     sceneTree: explorerHostController.sceneTree,
@@ -332,6 +399,8 @@ async function main() {
     tilesService,
     viewerHostController,
     commandEventCleanup,
+    modelCommandsCleanup: () => {savedViewsService.destroy(); stopMeasurementsWatch(); measurementService.destroy(); viewHistory.destroy(); loadedModelsService.destroy();},
+    sectionCommandsCleanup: () => {stopPlanLabelsWatch(); planLabelsService.destroy(); sectionViewService.destroy();},
     viewportCommandsCleanup,
     viewportContextMenuCleanup
   });
@@ -343,6 +412,11 @@ async function main() {
   setStatus("status", workspace.status);
   markStudioExampleLoaded();
   exposeDebugApi({
+    savedViewsService,
+    viewHistory,
+    loadedModelsService,
+    measurementService,
+    sectionViewService,
     app,
     data,
     scene,

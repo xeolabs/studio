@@ -1,5 +1,11 @@
+import type {LoadedModel} from "../services/LoadedModelsService";
 import type {ObjectSelectionDetails} from "../services/ObjectSelectionDetails";
 import type {RendererMode} from "../services/RendererService";
+import type {WorkspaceLayout} from "../layout/observeWorkspaceLayout";
+
+import {createSavedViewsState} from "./savedViewsState";
+import {createMeasurementState} from "./measurementState";
+import {createSectionState} from "./sectionState";
 
 export type InspectorSource = "toolbar" | "data" | "ifc" | "ifcStoreys" | "ifcTypes" | "scene" | "viewer";
 
@@ -42,9 +48,9 @@ export interface StudioTaskEntry {
 
 const DEFAULT_INSPECTOR_CONTEXT: InspectorContext = {
   source: "data",
-  title: "Data Explorer",
+  title: "Building",
   kind: "Explorer",
-  detail: "Select a node in the Data, IFC Structure, IFC Storeys, IFC Types, Scene or Viewer explorer to inspect it here."
+  detail: "Tap an element in the model, or choose one in Explore or Floors, to see its properties."
 };
 
 export function createWorkspaceStore(Pinia: any) {
@@ -53,10 +59,27 @@ export function createWorkspaceStore(Pinia: any) {
       status: "Loading Studio viewer...",
       loaded: false,
       projectName: "Duplex",
+      loadedModels: [] as LoadedModel[],
+      modelsExpanded: true,
       rendererMode: "webgpu" as RendererMode,
       rendererSwitching: false,
       rendererError: "",
       activeActivity: "explorer",
+      layoutMode: "wide" as WorkspaceLayout,
+      responsivePanelId: "",
+      explorePanelId: "ifcStructure",
+      isolationLabel: "",
+      toolMode: "select" as "select" | "hide" | "xray" | "measure",
+      measurements: createMeasurementState(),
+      savedViews: createSavedViewsState(),
+      history: {canUndo: false, canRedo: false, undoLabel: "", redoLabel: "", revision: 0},
+      section: createSectionState(),
+      inspectorVisible: false,
+      responsivePanelSize: "half" as "peek" | "half" | "expanded",
+      inspectorSession: {
+        activeTab: "details", scrollTop: 0, objectId: "", advancedOpen: false,
+        propertyQuery: "", collapsedPropertySets: {} as Record<string, boolean>
+      },
       toolWindowOpen: {
         viewer: true,
         data: false,
@@ -66,6 +89,7 @@ export function createWorkspaceStore(Pinia: any) {
         scene: false,
         viewerExplorer: false,
         inspector: false,
+        section: false,
         "runtime-overview": false,
         "diagnostic-center": false,
         boundaries: false,
@@ -75,7 +99,7 @@ export function createWorkspaceStore(Pinia: any) {
         "scene-health": false,
         tiles: false
       } as Record<string, boolean>,
-      bottomPanelOpen: true,
+      bottomPanelOpen: false,
       bottomPanelTab: "output",
       bottomPanelHeight: 180,
       commandPaletteOpen: false,
@@ -94,6 +118,22 @@ export function createWorkspaceStore(Pinia: any) {
       selectedObjectDetails: null as ObjectSelectionDetails | null
     }),
     actions: {
+      setLayoutMode(mode: WorkspaceLayout) {
+        this.layoutMode = mode;
+      },
+      setResponsivePanelSize(size: "peek" | "half" | "expanded") {
+        this.responsivePanelSize = size;
+      },
+      setResponsivePanel(panelId: string) {
+        if (panelId && panelId !== this.responsivePanelId) this.responsivePanelSize = "half";
+        else if (panelId && this.responsivePanelSize === "peek") this.responsivePanelSize = "half";
+        this.responsivePanelId = panelId;
+        if (this.layoutMode !== "wide") {
+          for (const id of Object.keys(this.toolWindowOpen)) {
+            this.toolWindowOpen[id] = id === "viewer" || id === panelId;
+          }
+        }
+      },
       setStatus(status: string) {
         this.status = status;
       },

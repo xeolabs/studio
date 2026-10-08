@@ -3,12 +3,13 @@ import {CommandIds as C} from "./commandIds";
 export const toolWindowMenuItems = [
   {label: "3D Canvas", commandId: C.view.toolWindow("viewer")},
   {label: "Data", commandId: C.view.toolWindow("data")},
-  {label: "IFC Structure", commandId: C.view.toolWindow("ifcStructure")},
-  {label: "IFC Storeys", commandId: C.view.toolWindow("ifcStoreys")},
-  {label: "IFC Types", commandId: C.view.toolWindow("ifcTypes")},
+  {label: "Building", commandId: C.view.toolWindow("ifcStructure")},
+  {label: "Floors", commandId: C.view.toolWindow("ifcStoreys")},
+  {label: "Categories", commandId: C.view.toolWindow("ifcTypes")},
   {label: "Scene", commandId: C.view.toolWindow("scene")},
   {label: "Viewer", commandId: C.view.toolWindow("viewerExplorer")},
-  {label: "Inspector", commandId: C.view.toolWindow("inspector")},
+  {label: "Properties", commandId: C.view.toolWindow("inspector")},
+  {label: "Section", commandId: C.view.toolWindow("section")},
   {label: "Runtime", commandId: C.view.toolWindow("runtime-overview")},
   {label: "Diagnostics", commandId: C.view.toolWindow("diagnostic-center")},
   {label: "Boundaries", commandId: C.view.toolWindow("boundaries")},
@@ -32,8 +33,10 @@ export const studioMenuSections = [
     id: "edit",
     label: "Edit",
     items: [
+      {label: "Undo view change", commandId: "view.undo"},
+      {label: "Redo view change", commandId: "view.redo"},
       {label: "Clear Selection", commandId: C.selection.clear},
-      {label: "Inspect Selection", commandId: C.selection.inspect},
+      {label: "Selection Properties", commandId: C.selection.inspect},
       {label: "Copy Selected Object ID", commandId: C.selection.copyId},
       {label: "Copy Selection Details as JSON", commandId: C.selection.copyDetailsJson}
     ]
@@ -43,22 +46,14 @@ export const studioMenuSections = [
     label: "View",
     groups: [
       {
-        label: "Runtime",
-        items: [
-          {label: "Data", commandId: C.view.toolWindow("data")},
-          {label: "Scene", commandId: C.view.toolWindow("scene")},
-          {label: "Viewer", commandId: C.view.toolWindow("viewerExplorer")}
-        ]
-      },
-      {
         label: "IFC",
         items: [
           {
-            label: "IFC Data",
+            label: "Explore building",
             children: [
-              {label: "IFC Structure", commandId: C.view.toolWindow("ifcStructure")},
-              {label: "IFC Storeys", commandId: C.view.toolWindow("ifcStoreys")},
-              {label: "IFC Types", commandId: C.view.toolWindow("ifcTypes")}
+              {label: "Building", commandId: C.view.toolWindow("ifcStructure")},
+              {label: "Floors", commandId: C.view.toolWindow("ifcStoreys")},
+              {label: "Categories", commandId: C.view.toolWindow("ifcTypes")}
             ]
           }
         ]
@@ -67,16 +62,34 @@ export const studioMenuSections = [
         label: "Panels",
         items: [
           {label: "3D Canvas", commandId: C.view.toolWindow("viewer")},
-          {label: "Inspector", commandId: C.view.toolWindow("inspector")}
+          {label: "Properties", commandId: C.view.toolWindow("inspector")},
+          {label: "Section and floor plan", commandId: C.view.toolWindow("section")}
         ]
       },
       {
         label: "Viewport",
         items: [
+          {label: "Saved views…", commandId: "views.open"},
           {label: "Fit All", commandId: C.viewport.fitAll},
           {label: "Fit Selection in View", commandId: C.viewport.frameSelection},
           {label: "Home View", commandId: C.viewport.homeView},
-          {label: "Show All in View", commandId: C.viewport.showAll}
+          {label: "Show All in View", commandId: C.viewport.showAll},
+          {label: "Restore Previous Visibility", commandId: "viewport.restoreIsolation"}
+        ]
+      },
+
+    ]
+  },
+  {
+    id: "tools",
+    label: "Advanced",
+    groups: [
+      {
+        label: "Technical explorers",
+        items: [
+          {label: "Data", commandId: C.view.toolWindow("data")},
+          {label: "Scene", commandId: C.view.toolWindow("scene")},
+          {label: "Viewer", commandId: C.view.toolWindow("viewerExplorer")}
         ]
       },
       {
@@ -85,13 +98,12 @@ export const studioMenuSections = [
           {label: "Use WebGL", commandId: C.renderer.webgl},
           {label: "Use WebGPU", commandId: C.renderer.webgpu}
         ]
-      }
-    ]
-  },
-  {
-    id: "tools",
-    label: "Tools",
-    groups: [
+      },
+      {label: "Activity", items: [
+        {label: "Output and status", commandId: "bottom.output"},
+        {label: "Events", commandId: "bottom.events"},
+        {label: "Tasks", commandId: "bottom.tasks"}
+      ]},
       {label: "Diagnostics", items: [
         {label: "Diagnostics", commandId: C.view.toolWindow("diagnostic-center")},
         {label: "Scene Health", commandId: C.view.toolWindow("scene-health")},

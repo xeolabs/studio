@@ -9,7 +9,7 @@ import {summarizeVisibility, type VisibilitySummary} from "../tree/visibilitySum
 import {collapseAABB3, createAABB3Float64, expandAABB3Point3, type AABB3} from "@xeokit/sdk/base/math/boundaries";
 import {transformPoint3} from "@xeokit/sdk/base/math/matrix";
 import type {Scene, SceneObject} from "@xeokit/sdk/model/scene";
-import {CameraFlightAnimation} from "@xeokit/sdk/viewing/cameraFlight";
+import {StudioCameraFlight as CameraFlightAnimation} from "../../services/StudioCameraFlight";
 import type {View} from "@xeokit/sdk/viewing/viewer";
 
 export type DataExplorerNodeKind =

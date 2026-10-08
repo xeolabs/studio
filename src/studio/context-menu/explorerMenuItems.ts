@@ -74,6 +74,7 @@ function sceneExplorerMenuItems(params: ExplorerMenuParams, node: any): StudioCo
     separator("scene-copy"),
     ...copyItems(node, objectName(params, node)),
     separator("scene-delete"),
+    commandItem(params.commands, "unload-model", "model.unload", {visible: node.kind === "model", payload: {source: "scene", modelId: node.modelId}}),
     actionItem("delete-model", "Delete SceneModel", () => store.confirmAndDeleteModel(node), {visible: node.kind === "model"}),
     actionItem("delete-object", "Delete SceneObject", () => store.confirmAndDeleteObject(node), {visible: node.kind === "object"})
   ];
@@ -113,6 +114,7 @@ function dataExplorerMenuItems(params: ExplorerMenuParams, node: any): StudioCon
     separator("data-copy"),
     ...copyItems(node, node.kind === "object" ? store.data.objects[node.componentId]?.name : undefined),
     separator("data-delete"),
+    commandItem(params.commands, "unload-model", "model.unload", {visible: node.kind === "model", payload: {source: "data", modelId: node.modelId}}),
     actionItem("delete-model", "Delete DataModel", () => store.confirmAndDeleteModel(node), {visible: node.kind === "model"})
   ];
   return visibleItems(items);

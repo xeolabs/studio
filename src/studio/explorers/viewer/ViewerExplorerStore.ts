@@ -7,7 +7,7 @@ import {
   PerspectiveProjectionType
 } from "@xeokit/sdk/base/constants";
 import type {SceneObject} from "@xeokit/sdk/model/scene";
-import {CameraFlightAnimation} from "@xeokit/sdk/viewing/cameraFlight";
+import {StudioCameraFlight as CameraFlightAnimation} from "../../services/StudioCameraFlight";
 import {parseNumericInput} from "../tree/numericInput";
 import {parseMatrixValue} from "./matrixInput";
 import {naturalCompare} from "../tree/naturalCompare";

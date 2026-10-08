@@ -14,6 +14,7 @@ export interface IFCStoreysViewParams {
   viewer: Viewer;
   view?: View;
   vue?: any;
+  commands?: {execute(id: string, payload?: unknown): void};
 }
 
 export class IFCStoreysView {
@@ -31,7 +32,7 @@ export class IFCStoreysView {
   static async create(params: IFCStoreysViewParams): Promise<IFCStoreysView> {
     const Vue = params.vue || await loadVue();
     const storeysView = new IFCStoreysView(params, Vue);
-    await storeysView._mount(params.container, Vue);
+    await storeysView._mount(params.container, Vue, params.commands);
     return storeysView;
   }
 
@@ -44,7 +45,7 @@ export class IFCStoreysView {
 
   async revealNode(id: string): Promise<void> { await this._tree?.reveal(id); }
 
-  private async _mount(container: HTMLElement, Vue: any): Promise<void> {
+  private async _mount(container: HTMLElement, Vue: any, commands?: {execute(id: string, payload?: unknown): void}): Promise<void> {
     const icons = await loadExplorerIcons();
     const DataObjectTreeNode = createDataObjectTreeNodeComponent(icons.SlidersHorizontal);
     const PagedTree = createPagedTree(Vue, DataObjectTreeNode, icons);
@@ -64,14 +65,15 @@ export class IFCStoreysView {
         <section class="xeokit-data-tree" :class="{ 'is-busy': state.busy }">
           <header class="xeokit-data-tree-header">
             <div>
-              <h1>IFC Storeys</h1>
-              <p>{{ state.roots.length }} building storey{{ state.roots.length === 1 ? '' : 's' }}</p>
+              <h1>Floors</h1>
+              <p>{{ state.roots.length }} floor{{ state.roots.length === 1 ? '' : 's' }}</p>
             </div>
           </header>
           <PagedTree class="xeokit-data-tree-roots" :store="store" :ref="bindTree"/>
         </section>
       `
     });
+    this._app.provide("commands", commands || null);
     this._app.mount(container);
   }
 }

@@ -5,6 +5,10 @@ import type {PickStrategy} from "../../../spatial/picking";
  * Construction parameters for {@link DistanceMeasurementTool}.
  */
 export interface DistanceMeasurementToolParams {
+  /** Default formatter for world-space lengths. Individual measurements may override it. */
+  formatLength?: (length: number) => string;
+  /** Overlay stacking order. Default 150000. */
+  zIndex?: number;
 
   /**
    * The {@link viewing!viewer.View | View} the tool paints into. The widget mounts an

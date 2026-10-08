@@ -1,7 +1,7 @@
 import type {SDKResult} from "@xeokit/sdk/base/core";
 import {createUUID} from "@xeokit/sdk/base/utils";
-import type {Data, DataModel} from "@xeokit/sdk/model/data";
-import type {CoordinateSystemParams, Scene, SceneModel} from "@xeokit/sdk/model/scene";
+import {Data, type DataModel} from "@xeokit/sdk/model/data";
+import {Scene, type CoordinateSystemParams, type SceneModel} from "@xeokit/sdk/model/scene";
 import type {LoaderProgress} from "@xeokit/sdk/formats";
 import type {LoaderRegistry} from "../importing/LoaderRegistry";
 import type {ImportDataSet} from "../importing/ImportDataSet";
@@ -12,6 +12,8 @@ import {createSlots} from "./importSlots";
 import {acceptsSource, assignImportSources, detectImportDataSet} from "./importSourceDetection";
 import {importValidation} from "./importValidation";
 import type {ImportDialogState, ImportSource, ImportSourceMode} from "./importDialogState";
+import {importConflicts, commitImport, requireValue, type PreparedImport, type ImportConflict} from "./importTransaction";
+import {importTitle} from "./modelNames";
 export {createImportDialogState} from "./importDialogState";
 export type {ImportDialogState, ImportFileSlotState} from "./importDialogState";
 
@@ -21,6 +23,8 @@ export interface ImportDialogServiceParams {
   state: ImportDialogState;
   loaders?: LoaderRegistry;
   onLoaded?: (result: ImportLoadResult) => void;
+  getModels?: () => ImportConflict[];
+  beforeReplace?: (models: ImportConflict[]) => void;
 }
 export interface ImportLoadResult {
   modelId: string;
@@ -28,12 +32,14 @@ export interface ImportLoadResult {
   sceneModel?: SceneModel;
   dataModel?: DataModel;
   frameAfterImport: boolean;
+  title?: string;
 }
 
 /** Owns import drafts and execution. Vue renders projections; it never invokes loaders. */
 export class ImportDialogService {
   private readonly _loaders: LoaderRegistry;
   private readonly _state: ImportDialogState;
+  private prepared: PreparedImport | null = null;
   constructor(private readonly params: ImportDialogServiceParams) {
     this._state = params.state;
     this._loaders = params.loaders ?? createLazyLoaderRegistry();
@@ -42,8 +48,33 @@ export class ImportDialogService {
   get activeDataSet(): ImportDataSet | undefined {
     return this._state.dataSets.find(d => d.id === this._state.dataSetId);
   }
-  open(): void { this._state.open = true; }
-  close(): void { this._state.open = false; }
+  open(): void {
+    if (!this._state.open) this.setDataSet("");
+    this._state.open = true;
+  }
+  close(): void { this.cancelReplacement(); this._state.open = false; }
+
+  cancelReplacement(): void { this.prepared = null; this._state.conflicts = []; }
+  replaceExisting(): void {
+    if (!this.prepared || this._state.loading) return;
+    const prepared = this.prepared;
+    const conflicts = importConflicts(this.params.scene, this.params.data, prepared, this.params.getModels?.());
+    // Recheck at the decision point; imports may have changed while the prompt was open.
+    if (conflicts.some(c => !this._state.conflicts.some(old => old.sceneModelId === c.sceneModelId && old.dataModelId === c.dataModelId))) {
+      this._state.conflicts = conflicts; return;
+    }
+    this._state.loading = true;
+    try {
+      this.params.beforeReplace?.(conflicts);
+      this.commit(prepared, conflicts);
+      this.cancelReplacement();
+    } catch (error) {
+      this._state.errorText = "Could not replace the model.";
+      this._state.errorDetails = String(error);
+      this._state.statusText = "Existing models were kept.";
+      this.cancelReplacement();
+    } finally { this._state.loading = false; }
+  }
 
   setDataSet(id: string): void {
     if (this._state.loading) return;
@@ -126,70 +157,73 @@ export class ImportDialogService {
     this._state.sources = []; this._state.formatOverride = false; this._state.dataSetId = "";
     this.reconcile();
   }
-  canLoad(): boolean { return !this._state.loading && !this._state.result && !importValidation(this._state).message; }
+  canLoad(): boolean { return !this._state.loading && !this._state.result && !this._state.conflicts.length && !importValidation(this._state).message; }
 
   async load(): Promise<void> {
     if (!this.canLoad()) return;
-    const state = this._state;
-    const dataSet = this.activeDataSet!;
+    const state = this._state, dataSet = this.activeDataSet!;
     const sources = this.activeSources.map(source => ({...source}));
-    const modelId = state.plannedModelId;
-    const coordinateSystem = this.resolveCoordinateSystem();
-    const frameAfterImport = state.frameAfterImport;
+    const modelId = state.plannedModelId, coordinateSystem = this.resolveCoordinateSystem();
+    const frameAfterImport = state.frameAfterImport, coordinateMode = state.coordinateMode;
     state.loading = true; state.errorText = ""; state.errorDetails = ""; state.sourceErrors = {};
-    state.statusText = "Preparing import...";
-    let sceneModel: SceneModel | undefined;
-    let dataModel: DataModel | undefined;
-    let activeSource: ImportSource | undefined;
+    state.statusText = "Checking model...";
+    const stagingScene = new Scene({coordinateSystem: this.params.scene.coordinateSystem.toParams()}), stagingData = new Data();
+    let sceneModel: SceneModel | undefined, dataModel: DataModel | undefined, activeSource: ImportSource | undefined;
     const notices = new Set<string>();
     const onError = (_sender: unknown, result: SDKResult<unknown>) => {
       if (result.ok === false && notices.size < 20) notices.add(result.error);
     };
-    const unsubscribe = [this.params.scene.events.onError.subscribe(onError), this.params.data.events.onError.subscribe(onError)];
+    const unsubscribe = [stagingScene.events.onError.subscribe(onError), stagingData.events.onError.subscribe(onError)];
     try {
-      if (dataSet.loadsSceneGeometry !== false) {
-        sceneModel = requireValue(this.params.scene.createModel({id: modelId, coordinateSystem, updateMode: state.updateMode}));
-      }
-      if (dataSet.loadsDataSemantics !== false) dataModel = requireValue(this.params.data.createModel({id: modelId}));
-      // Materials must exist before OBJ mesh creation.
+      if (dataSet.loadsSceneGeometry !== false) sceneModel = requireValue(stagingScene.createModel({id: modelId, coordinateSystem, updateMode: state.updateMode}));
+      if (dataSet.loadsDataSemantics !== false) dataModel = requireValue(stagingData.createModel({id: modelId}));
       const specs = [...dataSet.files].sort((a, b) => Number(b.loadFormat === "mtl") - Number(a.loadFormat === "mtl"));
       for (const spec of specs) {
-        activeSource = sources.find(s => s.slotKey === spec.key);
-        if (!activeSource) continue;
-        await this.loadSource(spec, activeSource, sceneModel, dataModel);
+        activeSource = sources.find(source => source.slotKey === spec.key);
+        if (activeSource) await this.loadSource(spec, activeSource, sceneModel, dataModel);
       }
-      // Serialized SceneModels may supply their own coordinates. An explicit
-      // user override wins; source mode leaves the imported settings intact.
-      if (sceneModel && state.coordinateMode === "override" && coordinateSystem) sceneModel.coordinateSystem.fromParams(coordinateSystem);
-      state.loadedModelId = modelId;
+      if (sceneModel && coordinateMode === "override" && coordinateSystem) sceneModel.coordinateSystem.fromParams(coordinateSystem);
+      // Loaders can report a failure through SDK events while resolving their promise.
+      if (notices.size) throw new Error([...notices].join("\n"));
       if (sceneModel && !Object.keys(sceneModel.objects).length) notices.add("No SceneObjects were created by this import.");
       if (dataModel && !Object.keys(dataModel.objects).length) notices.add("No DataObjects were created by this import.");
-      state.result = {modelId, label: dataSet.label, scene: !!sceneModel, data: !!dataModel,
-        sceneObjects: Object.keys(sceneModel?.objects ?? {}).length,
-        dataObjects: Object.keys(dataModel?.objects ?? {}).length, warnings: [...notices]};
-      state.statusText = `Imported ${dataSet.label} as ${modelId}.`;
+      const prepared: PreparedImport = {modelId, title: importTitle(sources),
+        scene: sceneModel ? requireValue(sceneModel.toParams()) : undefined,
+        data: dataModel ? requireValue(dataModel.toParams()) : undefined, warnings: [...notices], frameAfterImport};
+      const conflicts = importConflicts(this.params.scene, this.params.data, prepared, this.params.getModels?.());
+      if (conflicts.length) {
+        this.prepared = prepared; state.conflicts = conflicts;
+        state.statusText = "This import contains elements that are already loaded.";
+        state.open = true;
+      } else this.commit(prepared);
     } catch (error) {
-      sceneModel?.destroy(); dataModel?.destroy();
       state.errorText = `Could not import ${activeSource?.name || activeSource?.url || dataSet.label}.`;
       state.errorDetails = error instanceof Error ? error.message : String(error);
-      if (activeSource) state.sourceErrors[activeSource.id] = activeSource.mode === "url"
-        ? "Check the URL, access permissions, and selected format."
-        : "Check the file contents and selected format.";
-      state.statusText = "Import failed. No new models were kept.";
+      if (activeSource) state.sourceErrors[activeSource.id] = "Check the source and selected format.";
+      state.statusText = "Import failed. Existing models were kept.";
     } finally {
       unsubscribe.forEach(stop => stop());
+      stagingScene.destroy(); stagingData.destroy();
       state.loading = false;
     }
-    // A UI navigation failure must never roll back a successfully imported model.
-    if (state.result) {
-      try { this.params.onLoaded?.({modelId, dataSet, sceneModel, dataModel, frameAfterImport}); }
-      catch (error) { state.result.warnings.push(`Imported successfully, but navigation failed: ${String(error)}`); }
-    }
+  }
+
+  private commit(prepared: PreparedImport, conflicts: ImportConflict[] = []): void {
+    const {sceneModel, dataModel} = commitImport(this.params.scene, this.params.data, prepared, conflicts);
+    const state = this._state, dataSet = this.activeDataSet!;
+    state.loadedModelId = prepared.modelId;
+    state.result = {modelId: prepared.modelId, label: prepared.title, scene: !!sceneModel, data: !!dataModel,
+      sceneObjects: Object.keys(sceneModel?.objects || {}).length, dataObjects: Object.keys(dataModel?.objects || {}).length,
+      warnings: prepared.warnings};
+    state.statusText = `Imported ${prepared.title}.`;
+    try { this.params.onLoaded?.({modelId: prepared.modelId, title: prepared.title, dataSet, sceneModel, dataModel, frameAfterImport: prepared.frameAfterImport}); }
+    catch (error) { state.result.warnings.push(`Imported successfully, but navigation failed: ${String(error)}`); }
   }
 
   private get activeSources(): ImportSource[] { return this._state.sources.filter(s => s.mode === this._state.sourceMode); }
 
   private reconcile(): void {
+    this.cancelReplacement();
     const state = this._state;
     const previous = state.dataSetId;
     if (!state.formatOverride) state.dataSetId = detectImportDataSet(this.activeSources, state.dataSets);
@@ -236,9 +270,4 @@ export class ImportDialogService {
     }});
     if (result?.ok === false) throw new Error(result.error);
   }
-}
-
-function requireValue<T>(result: SDKResult<T>): T {
-  if (result.ok === false) throw new Error(result.error);
-  return result.value;
 }

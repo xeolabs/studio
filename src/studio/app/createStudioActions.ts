@@ -14,6 +14,7 @@ export function createStudioActions(): StudioActions {
       setOrigin: () => {},
       addFiles: () => {}, addUrl: () => {}, removeSource: () => {}, assignSource: () => {},
       replaceSource: () => {}, updateUrl: () => {}, reset: () => {},
+      cancelReplacement: () => {}, replaceExisting: () => {},
       canLoad: () => false,
       load: async () => {}
     },

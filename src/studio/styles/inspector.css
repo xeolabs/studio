@@ -110,8 +110,7 @@
             color: #172334;
             font-size: 15px;
             line-height: 1.2;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+            overflow-wrap: anywhere;
         }
 
         .inspector-panel-header p {
@@ -365,3 +364,37 @@
             color: #607083;
             font-size: 12px;
         }
+
+/* BIM values remain readable on narrow panels without hover tooltips. */
+.inspector-readable-properties dt,
+.inspector-readable-properties dd {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+.inspector-property-search { display: flex; gap: 6px; }
+.inspector-property-search input {
+    flex: 1; min-width: 0; min-height: 44px; box-sizing: border-box;
+    padding: 8px; border: 1px solid #b6c6d6; border-radius: 4px;
+    background: white; color: #172334; font: 16px system-ui, sans-serif;
+}
+.inspector-property-search button {
+    min-width: 44px; min-height: 44px; border: 1px solid #b6c6d6; border-radius: 4px;
+    background: white; color: #224d70; cursor: pointer;
+}
+.inspector-property-group { min-width: 0; border: 1px solid #dbe1e8; border-radius: 4px; background: white; }
+.inspector-property-group summary,
+.inspector-advanced > summary {
+    min-height: 44px; box-sizing: border-box; padding: 12px;
+    color: #224d70; font: 600 12px/1.5 system-ui, sans-serif;
+    overflow-wrap: anywhere; cursor: pointer;
+}
+.inspector-property-count { color: #607083; font-weight: 400; margin-left: 6px; }
+.inspector-property-group .inspector-property-list { border: 0; border-top: 1px solid #dbe1e8; }
+.inspector-bim-properties > .inspector-empty { padding: 0; line-height: 1.5; }
+.inspector-advanced { border-bottom: 1px solid #dbe1e8; }
+.inspector-advanced > summary { background: #edf2f7; }
+.inspector-advanced > summary span { margin-left: 8px; color: #607083; font-weight: 400; }
+.inspector-advanced .inspector-tabs button { min-height: 44px; }
+.inspector-panel summary:focus-visible,
+.inspector-property-search :focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }

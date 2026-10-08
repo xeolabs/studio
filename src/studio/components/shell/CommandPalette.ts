@@ -102,6 +102,7 @@ export function createCommandPaletteComponent(Vue: any, params: CommandPaletteCo
       <el-dialog
         v-model="open"
         class="studio-command-palette-dialog"
+        :append-to-body="true"
         append-to-body
         :show-close="false"
         width="min(720px, calc(100vw - 48px))">

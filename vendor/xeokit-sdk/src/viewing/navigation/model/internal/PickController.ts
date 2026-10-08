@@ -11,7 +11,7 @@ const DEFAULT_SNAP_MODE = "vertex";
  *
  * This controller is intentionally narrow in scope:
  * - it stores pending pick requests
- * - it coalesces/reuses pick work
+ * - it evaluates each explicitly scheduled request
  * - it translates pick results into hover/snap-related events
  *
  * It does *not* own the DOM event lifecycle itself. Mouse/touch handlers write
@@ -72,30 +72,13 @@ class PickController {
    */
   private picked: boolean;
 
-  /**
-   * Holds the most recent regular pick result.
-   *
-   * Important: in the code as shown, update() never actually assigns a new value to this.
-   * That strongly suggests either:
-   * - this snippet is incomplete, or
-   * - there is a regression/refactor bug.
-   *
-   * The surrounding logic clearly expects pickResult to hold the latest surface/entity hit.
-   */
+  /** Most recent regular pick result, valid only for the current evaluation. */
   private pickResult: PickResult;
 
   /**
    * Last hovered entity id, used to synthesize hover enter/hover out transitions.
    */
   #lastPickedEntityId: any;
-
-  /**
-   * Hash of the last evaluated request.
-   *
-   * Used to suppress duplicate evaluations when the pointer position and request
-   * type have not changed.
-   */
-  #lastHash: any;
 
   /**
    * Small event budget/counter used to indicate that fireEvents() has meaningful work to do.
@@ -190,7 +173,6 @@ class PickController {
     this.pickResult = null;
 
     this.#lastPickedEntityId = null;
-    this.#lastHash = null;
     this.#needFireEvents = 0;
   }
 
@@ -200,7 +182,7 @@ class PickController {
    * Key design points:
    * - No-op if pointer interaction is disabled.
    * - No-op if nothing has been scheduled.
-   * - Suppresses duplicate work using a simple request hash.
+   * - Re-evaluates even at a stationary pointer because the scene or camera may change.
    * - Supports snap-first / pick-second evaluation.
    *
    * This method is deliberately separated from fireEvents():
@@ -227,29 +209,15 @@ class PickController {
     }
 
     /**
-     * Coarse request deduplication.
-     *
-     * We quantize the cursor position to integer pixels and include the active evaluation
-     * modes in the hash. If nothing relevant changed, we skip the work.
-     *
-     * Caveat:
-     * The current implementation never writes back to #lastHash, so deduplication as shown
-     * will not actually take effect. That looks like an omission/bug.
-     */
-    const hash = `${~~this.pickCursorPos[0]}-${~~this.pickCursorPos[1]}-${this.scheduleSnapOrPick}-${this.schedulePick}`;
-    if (this.#lastHash === hash) {
-      return;
-    }
-    this.#lastHash = hash;
-
-    /**
      * Reset per-evaluation transient state.
      */
+    // Hover publication clears its result, and visibility/camera changes can
+    // invalidate a hit without moving the pointer. Never reuse a previous pick.
+    this.pickResult = null;
+    this.snapPickResult = null;
     this.picked = false;
     this.snappedOrPicked = false;
     this.hoveredSnappedOrSurfaceOff = false;
-
-    const hasHoverSurfaceSubs = this.#modelNavigation.events.onHover.count > 0;
 
     if (this.scheduleSnapOrPick || this.schedulePick) {
 
@@ -297,19 +265,18 @@ class PickController {
 
     if (this.schedulePick) {
       if (this.pickResult && this.pickResult.worldPos) {
-        const pickResultCanvasPos = this.pickResult.canvasPos;
-        if (pickResultCanvasPos[0] === this.pickCursorPos[0] && pickResultCanvasPos[1] === this.pickCursorPos[1]) {
-          this.picked = true;
-          this.#needFireEvents++;
-          this.schedulePick = false;
-          if (this.scheduleSnapOrPick) {
-            this.snappedOrPicked = true;
-          } else {
-            this.hoveredSnappedOrSurfaceOff = true;
-          }
-          this.scheduleSnapOrPick = false;
-          return;
+        // This result belongs to the request just made. PickResult rounds its
+        // canvas coordinates, whereas touch positions can contain fractions.
+        this.picked = true;
+        this.#needFireEvents++;
+        this.schedulePick = false;
+        if (this.scheduleSnapOrPick) {
+          this.snappedOrPicked = true;
+        } else {
+          this.hoveredSnappedOrSurfaceOff = true;
         }
+        this.scheduleSnapOrPick = false;
+        return;
       }
 
       this.scheduleSnapOrPick = false;

@@ -15,8 +15,10 @@
  * One {@link DistanceMeasurementTool} per
  * {@link viewing!viewer.View | View} owns the overlay and a keyed
  * collection of {@link DistanceMeasurement | DistanceMeasurements};
- * an optional {@link MouseDistanceMeasurementsControl} turns canvas
- * clicks into measurements with two-click creation.
+ * {@link PointerDistanceMeasurementsControl} adds two-click creation and
+ * touch placement with slide-to-refine endpoints. Its callbacks let an
+ * application suspend navigation during placement and connect a pointer lens.
+ * {@link MouseDistanceMeasurementsControl} remains available for mouse-only use.
  *
  * <br>
  *
@@ -251,3 +253,5 @@ export * from "./DistanceMeasurementParams";
 export * from "./DistanceMeasurementTool";
 export * from "./DistanceMeasurementToolParams";
 export * from "./MouseDistanceMeasurementsControl";
+export * from "./PointerDistanceMeasurementsControl";
+export * from "./pickMeasurementPoint";

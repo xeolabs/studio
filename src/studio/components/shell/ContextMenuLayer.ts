@@ -10,6 +10,7 @@ export function createContextMenuLayerComponent(Vue: any, params: ContextMenuLay
     name: "StudioContextMenuLayer",
     setup() {
       const contextMenuLayer = Vue.ref(null) as {value: HTMLElement | null};
+      const contextMenuTarget = Vue.shallowRef(document.body);
       let returnFocus: HTMLElement | null = null;
       const close = (restoreFocus = true) => {
         params.contextMenuService.close();
@@ -40,6 +41,8 @@ export function createContextMenuLayerComponent(Vue: any, params: ContextMenuLay
       };
       Vue.watch(() => params.contextMenuState.items, () => {
         if (!params.contextMenuState.open) return;
+        // Tool panels are nonmodal; menus share the page overlay layer.
+        contextMenuTarget.value = document.body;
         if (!contextMenuLayer.value?.contains(document.activeElement)) {
           returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         }
@@ -89,12 +92,14 @@ export function createContextMenuLayerComponent(Vue: any, params: ContextMenuLay
         });
       });
       return {
+        contextMenuTarget,
         contextMenuLayer,
         contextMenuState: params.contextMenuState,
         runContextMenuItem
       };
     },
     template: `
+      <Teleport :to="contextMenuTarget">
       <div
         v-if="contextMenuState.open"
         ref="contextMenuLayer"
@@ -119,6 +124,7 @@ export function createContextMenuLayerComponent(Vue: any, params: ContextMenuLay
           </button>
         </template>
       </div>
+      </Teleport>
     `
   };
 }

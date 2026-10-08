@@ -1,6 +1,7 @@
 import type {Scene} from "@xeokit/sdk/model/scene";
 import type {View} from "@xeokit/sdk/viewing/viewer";
 import type {SelectionService} from "../services/SelectionService";
+import {viewIsolation} from "../services/ViewIsolation";
 import {copyText} from "../ui/clipboard";
 
 export interface StudioObjectActionParams {
@@ -62,11 +63,12 @@ export function showOnlyObject(params: StudioObjectActionParams, objectId: strin
 }
 
 export function showOnlyObjects(params: StudioObjectActionParams, objectIds: string[]): void {
-  params.view.setObjectsVisible(Object.keys(params.view.objects), false);
-  params.view.setObjectsVisible(objectIds, true);
+  const details = objectIds.length === 1 ? params.selectionService.resolveSceneObject(objectIds[0]) : null;
+  viewIsolation(params.view).isolate(objectIds, details?.title || `${objectIds.length} elements`);
 }
 
 export function showAll(params: StudioObjectActionParams): void {
+  viewIsolation(params.view).clear();
   params.view.setObjectsVisible(Object.keys(params.view.objects), true);
 }
 

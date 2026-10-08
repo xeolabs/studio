@@ -4,6 +4,7 @@ import {
   RIGHT_TOOL_WINDOW_IDS,
   toolWindowPanels
 } from "./toolWindowDefinitions";
+import {observeWorkspaceLayout, type WorkspaceLayout} from "./observeWorkspaceLayout";
 
 interface DockviewControllerParams {
   notifyLayoutChanged: () => void;
@@ -17,20 +18,29 @@ export class DockviewController {
   private restoring = false;
   private saveHandle: number | null = null;
   private resolveReady!: () => void;
+  private layoutMode: WorkspaceLayout = "wide";
+  private desktopLayout: any = null;
+  private lastToolPanelId = "";
+  private desktopBottomPanelOpen = false;
+  private stopObservingLayout: () => void;
 
   constructor(private readonly params: DockviewControllerParams) {
     this.ready = new Promise<void>((resolve) => {
       this.resolveReady = resolve;
     });
+    this.stopObservingLayout = observeWorkspaceLayout((mode) => this.setLayoutMode(mode));
   }
 
   attach(event: any): void {
     const api = event?.api || event;
     this.api = api;
+    api?.onDidActivePanelChange?.((panel: any) => {
+      if (!this.restoring && panel?.id !== "viewer" && toolWindowPanels[panel?.id]) this.lastToolPanelId = panel.id;
+    });
     api?.onDidAddPanel?.(() => this.onLayoutChanged());
     api?.onDidRemovePanel?.(() => this.onLayoutChanged());
     api?.onDidLayoutChange?.(() => this.onLayoutChanged());
-    if (api?.addPanel && !this.restore()) {
+    if (api?.addPanel && (this.layoutMode !== "wide" || !this.restore())) {
       api.addPanel({id: "viewer", component: "ViewerPanel", title: "3D Canvas", renderer: "always"});
     }
     if (api?.addPanel && !this.getPanel("viewer")) {
@@ -46,9 +56,17 @@ export class DockviewController {
   }
 
   open(panelId: string): void {
+    if (["ifcStructure", "ifcStoreys", "ifcTypes"].includes(panelId)) this.params.workspace.explorePanelId = panelId;
     if (!this.api) {
       return;
     }
+    if (this.layoutMode !== "wide") {
+      if (toolWindowPanels[panelId]) {
+        this.params.workspace.setResponsivePanel(panelId === "viewer" ? "" : panelId);
+      }
+      return;
+    }
+    if (panelId !== "viewer" && toolWindowPanels[panelId]) this.lastToolPanelId = panelId;
     const existingPanel = this.getPanel(panelId);
     if (existingPanel) {
       this.syncPanelTitle(panelId, existingPanel);
@@ -78,6 +96,12 @@ export class DockviewController {
   }
 
   close(panelId: string): void {
+    if (this.layoutMode !== "wide") {
+      if (this.params.workspace.responsivePanelId === panelId) {
+        this.params.workspace.setResponsivePanel("");
+      }
+      return;
+    }
     const panel = this.getPanel(panelId);
     if (!panel) {
       this.params.workspace.setToolWindowOpen(panelId, false);
@@ -90,6 +114,8 @@ export class DockviewController {
   }
 
   resetSavedLayout(): void {
+    this.desktopLayout = null;
+    this.params.workspace.setResponsivePanel("");
     try {
       localStorage.removeItem(DOCKVIEW_LAYOUT_STORAGE_KEY);
     } catch (error) {
@@ -115,7 +141,7 @@ export class DockviewController {
   }
 
   toggle(panelId: string): void {
-    if (this.getPanel(panelId)) {
+    if (this.isOpen(panelId)) {
       this.close(panelId);
     } else {
       this.open(panelId);
@@ -123,17 +149,20 @@ export class DockviewController {
   }
 
   isOpen(panelId: string): boolean {
+    if (this.layoutMode !== "wide") {
+      return panelId === "viewer" || this.params.workspace.responsivePanelId === panelId;
+    }
     return !!this.getPanel(panelId);
   }
 
   sync(): void {
     for (const panelId of Object.keys(toolWindowPanels)) {
-      this.params.workspace.setToolWindowOpen(panelId, !!this.getPanel(panelId));
+      this.params.workspace.setToolWindowOpen(panelId, this.isOpen(panelId));
     }
   }
 
   save(): void {
-    if (this.restoring || !this.api || typeof this.api.toJSON !== "function") {
+    if (this.layoutMode !== "wide" || this.restoring || !this.api || typeof this.api.toJSON !== "function") {
       return;
     }
     try {
@@ -154,10 +183,69 @@ export class DockviewController {
   }
 
   dispose(): void {
+    this.stopObservingLayout();
     if (this.saveHandle !== null) {
       window.clearTimeout(this.saveHandle);
       this.saveHandle = null;
     }
+  }
+
+  private setLayoutMode(mode: WorkspaceLayout): void {
+    if (mode === this.layoutMode) return;
+    const wasWide = this.layoutMode === "wide";
+    const activePanelId = this.api?.activePanel?.id;
+    const desktopTool = activePanelId !== "viewer" && toolWindowPanels[activePanelId]
+      ? activePanelId : this.lastToolPanelId;
+    const activeTool = wasWide
+      ? (this.getPanel(desktopTool) ? desktopTool : "")
+      : this.params.workspace.responsivePanelId;
+    if (wasWide) {
+      this.save();
+      this.desktopLayout = this.api?.toJSON?.() || null;
+      this.desktopBottomPanelOpen = this.params.workspace.bottomPanelOpen;
+    }
+    this.layoutMode = mode;
+    this.params.workspace.setLayoutMode(mode);
+    if (wasWide || mode === "wide") {
+      this.params.workspace.setResponsivePanel(mode === "wide" ? "" : activeTool);
+      this.params.workspace.setBottomPanelOpen(mode === "wide" ? this.desktopBottomPanelOpen : false);
+    }
+    if (!this.api) return;
+    this.restoring = true;
+    try {
+      if (mode === "wide") {
+        if (this.desktopLayout) this.api.fromJSON(this.desktopLayout);
+        else this.restore();
+      } else if (wasWide) {
+        // Leave the live canvas mounted while tools move beside it.
+        for (const id of Object.keys(toolWindowPanels)) {
+          if (id !== "viewer") {
+            const panel = this.getPanel(id);
+            if (panel) this.closePanel(panel);
+          }
+        }
+      }
+      if (!this.getPanel("viewer")) this.addPanel("viewer", this.getViewerRestorePosition());
+      this.activatePanel(this.getPanel("viewer"));
+      if (mode === "wide" && activeTool) {
+        const alreadyRestored = !!this.getPanel(activeTool);
+        this.open(activeTool);
+        if (!alreadyRestored) {
+          // Vue updates the grid before this frame. Resize Dockview before sizing the
+          // new tool: its automatic resize is delayed and otherwise scales the tool up.
+          requestAnimationFrame(() => {
+            if (this.layoutMode !== "wide") return;
+            const host = document.querySelector<HTMLElement>(".studio-workbench .workspace");
+            if (host) this.api.layout(host.clientWidth, host.clientHeight);
+            this.getPanel(activeTool)?.api?.setSize?.({width: this.getInitialToolWindowWidth(activeTool)});
+          });
+        }
+      }
+    } finally {
+      this.restoring = false;
+    }
+    this.sync();
+    this.params.notifyLayoutChanged();
   }
 
   private onLayoutChanged(): void {
@@ -174,18 +262,16 @@ export class DockviewController {
     if (!this.api || typeof this.api.fromJSON !== "function") {
       return false;
     }
-    const serialized = localStorage.getItem(DOCKVIEW_LAYOUT_STORAGE_KEY);
-    if (!serialized) {
-      return false;
-    }
     try {
+      const serialized = localStorage.getItem(DOCKVIEW_LAYOUT_STORAGE_KEY);
+      if (!serialized) return false;
       this.restoring = true;
       this.api.fromJSON(normalizeStoredPanelTitles(JSON.parse(serialized)));
       this.syncPanelTitles();
       return true;
     } catch (error) {
       console.warn("[xeokit Studio] Unable to restore Dockview layout.", error);
-      localStorage.removeItem(DOCKVIEW_LAYOUT_STORAGE_KEY);
+      try { localStorage.removeItem(DOCKVIEW_LAYOUT_STORAGE_KEY); } catch { /* Storage may be disabled. */ }
       return false;
     } finally {
       this.restoring = false;
@@ -203,7 +289,7 @@ export class DockviewController {
       component: config.component,
       title: config.title,
       renderer: config.renderer,
-      ...(initialWidth ? {initialWidth} : {}),
+      ...(initialWidth ? {initialWidth, minimumWidth: 280} : {}),
       ...(position ? {position} : {})
     });
     this.syncPanelTitle(panelId, panel);

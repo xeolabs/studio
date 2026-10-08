@@ -6,10 +6,15 @@
     border: 1px dashed #2367c7;
     box-shadow: inset 0 -3px #abc9ef;
 }
+/* Give names the available text width; details can move below instead of reserving a fixed share. */
+.xeokit-scene-tree-title,
+.xeokit-data-explorer-title,
+.xeokit-viewer-explorer-title,
+.xeokit-data-tree-title { flex-wrap: wrap; row-gap: 0; }
 .xeokit-scene-tree-title > span:first-child,
 .xeokit-data-explorer-title > span:first-child,
-.xeokit-viewer-explorer-title > span:first-child { flex-shrink: 0; max-width: 60%; }
-.xeokit-data-tree-title > span:first-child { flex-shrink: 0; max-width: 65%; }
+.xeokit-viewer-explorer-title > span:first-child,
+.xeokit-data-tree-title > span:first-child { flex-shrink: 0; max-width: 100%; }
 .xeokit-data-tree-type-icon svg,
 .explorer-vector-field button svg {
     width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8;
@@ -19,11 +24,20 @@
 .explorer-model-settings summary { padding: 3px 0; cursor: pointer; }
 .explorer-model-settings .xeokit-scene-tree-model-coord { display: block; margin: 5px 0 8px; }
 .explorer-subtree-effects {
-    margin: 4px 8px 8px 0; padding: 6px 8px; border: 1px solid #d7dee7;
-    display: flex; flex-wrap: wrap; gap: 8px; color: #33404d; font-size: 12px;
+    margin: 4px 8px 8px 0; padding: 4px 6px; border: 1px solid #d7dee7;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px; color: #33404d; font-size: 12px;
 }
-.explorer-subtree-effects label { display: inline-flex; gap: 5px; align-items: center; }
-.explorer-subtree-effects input { color-scheme: light; accent-color: #2367c7; }
+.explorer-subtree-button {
+    min-height: 28px; padding: 3px 8px; border: 1px solid #b6c6d6; border-radius: 3px;
+    background: #edf4ff; color: #235b9b; font: inherit; font-weight: 600; cursor: pointer;
+}
+.explorer-subtree-button:hover { background: #dceaff; }
+.explorer-subtree-button[aria-pressed="true"] {
+    background: #2367c7; border-color: #1b55a7; color: white;
+}
+.explorer-subtree-button[aria-pressed="true"]:hover { background: #1b55a7; }
+.explorer-subtree-button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.explorer-subtree-button:disabled { opacity: .5; cursor: default; }
 .xeokit-viewer-explorer-control { grid-template-columns: minmax(0, 1fr); font-size: 13px; gap: 5px; }
 .xeokit-viewer-explorer-control.control-boolean { grid-template-columns: minmax(0, 1fr) auto; }
 .xeokit-viewer-explorer-number-control { grid-template-columns: minmax(40px, 1fr) minmax(60px, 90px); }
@@ -31,7 +45,26 @@
     .xeokit-scene-tree-title, .xeokit-data-explorer-title, .xeokit-viewer-explorer-title, .xeokit-data-tree-title {
         flex-direction: column; align-items: flex-start; gap: 0; padding: 3px 0;
     }
-    .xeokit-scene-tree-title > span:first-child, .xeokit-data-explorer-title > span:first-child,
-    .xeokit-viewer-explorer-title > span:first-child, .xeokit-data-tree-title > span:first-child { max-width: 100%; }
     .xeokit-viewer-explorer-controls { margin-left: 12px !important; }
 }
+
+.loaded-models { flex: 0 0 auto; margin: 0 0 6px; border-bottom: 1px solid #d7dee7; font-size: 12px; color: #33404d; }
+.loaded-models summary { display: flex; align-items: center; gap: 4px; box-sizing: border-box; min-height: 28px; padding: 4px 8px; cursor: pointer; font-weight: 600; }
+.loaded-models summary::before { content: "▸"; }
+.loaded-models[open] > summary::before { content: "▾"; }
+.loaded-models summary::-webkit-details-marker { display: none; }
+.loaded-models summary span { margin-left: 4px; color: #64748b; font-weight: 400; }
+.loaded-models ul { max-height: 144px; overflow: auto; padding: 0 8px 6px; margin: 0; list-style: none; }
+.loaded-models li, .loaded-models-empty { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.loaded-models-empty { padding: 0 8px 8px; justify-content: space-between; }
+.loaded-model-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loaded-models button { flex: 0 0 auto; min-height: 30px; padding: 4px 8px; border: 1px solid #b6c6d6; border-radius: 3px; background: #f5f8fb; color: #33404d; font: inherit; white-space: nowrap; cursor: pointer; }
+.loaded-models button:hover { background: #e6f0ff; }
+.loaded-models button:disabled { opacity: .5; cursor: default; }
+.loaded-models :is(summary, button):focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+@media (pointer: coarse) { .loaded-models button { min-height: 36px; } }
+
+.loaded-models button.loaded-model-icon { padding: 4px; width: 32px; min-width: 32px; }
+.loaded-model-icon svg { width: 16px; height: 16px; vertical-align: middle; }
+.loaded-model-icon[aria-pressed="true"] { color: #2367c7; background: #e9f2ff; }
+.loaded-model-icon[aria-pressed="mixed"] { color: #2367c7; border-style: dashed; }

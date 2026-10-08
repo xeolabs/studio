@@ -16,6 +16,8 @@ export interface ImportActions {
   replaceSource(id: string, file: File): void;
   updateUrl(id: string, url: string): void;
   reset(): void;
+  cancelReplacement(): void;
+  replaceExisting(): void;
   canLoad(): boolean;
   load(): Promise<void>;
 }

@@ -56,13 +56,15 @@ export async function createRuntime(params: CreateRuntimeParams): Promise<Studio
     styleBins: [
       {id: "selected", priority: 90, edges: true, edgeColor: [0.1, 0.45, 1], edgeWidth: 3, fillAlpha: 0.82},
       {id: "highlighted", priority: 80, edges: true, edgeColor: [1, 0.78, 0.05], edgeWidth: 2, fillAlpha: 0.72},
-      {id: "xrayed", priority: 70, fillAlpha: 0.18, edges: true, edgeColor: [0.35, 0.7, 1], edgeWidth: 1}
+      // X-ray must remain transparent when the element is also selected or highlighted.
+      {id: "xrayed", priority: 100, fillAlpha: 0.18, edges: true, edgeColor: [0.35, 0.7, 1], edgeWidth: 1}
     ],
     camera: {
       eye: [24.40, 23.70, 27.04],
       look: [4.39, 8.90, 2.54],
       up: [-0.56, -0.41, 0.71],
-      perspectiveProjection: {far: 1000}
+      perspectiveProjection: {far: 20000},
+      orthoProjection: {far: 20000}
     }
   }));
   // HemisphereAmbient belongs to view.lights, not this list of punctual lights.

@@ -17,6 +17,8 @@ export interface RegisterStudioTeardownParams {
   commandEventCleanup?: () => void;
   diagnosticPanelActivityCleanup?: () => void;
   viewportCommandsCleanup?: () => void;
+  sectionCommandsCleanup?: () => void;
+  modelCommandsCleanup?: () => void;
   viewportContextMenuCleanup?: () => void;
 }
 
@@ -30,6 +32,8 @@ export function registerStudioTeardown(params: RegisterStudioTeardownParams): ()
     window.removeEventListener("beforeunload", dispose);
     params.commandEventCleanup?.();
     params.diagnosticPanelActivityCleanup?.();
+    params.modelCommandsCleanup?.();
+    params.sectionCommandsCleanup?.();
     params.viewportCommandsCleanup?.();
     params.viewportContextMenuCleanup?.();
     params.getInputController()?.destroy?.();

@@ -1,19 +1,12 @@
-import {createVec2Float64, createVec3Float32, distVec2, geometricMeanVec2, lenVec3, subVec2, subVec3} from "../../../../base/math/vector";
+import {createVec2Float64, createVec3Float32, distVec2, lenVec3, subVec2, subVec3} from "../../../../base/math/vector";
 import {PerspectiveProjectionType} from "../../../../base/constants";
 import type {View} from "../../../viewer";
 import {getSceneCollisionIndex, SceneCollisionIndex} from "../../../../spatial/collision";
 
 const getCanvasPosFromEvent = function (event, canvasPos) {
-  let element = event.target;
-  let totalOffsetLeft = 0;
-  let totalOffsetTop = 0;
-  while (element.offsetParent) {
-    totalOffsetLeft += element.offsetLeft;
-    totalOffsetTop += element.offsetTop;
-    element = element.offsetParent;
-  }
-  canvasPos[0] = event.pageX - totalOffsetLeft;
-  canvasPos[1] = event.pageY - totalOffsetTop;
+  const rect = event.target.getBoundingClientRect();
+  canvasPos[0] = event.clientX - rect.left;
+  canvasPos[1] = event.clientY - rect.top;
   return canvasPos;
 };
 
@@ -39,6 +32,8 @@ class TouchPanRotateAndDollyHandler {
     const tapCanvasPos0 = createVec2Float64();
     const tapCanvasPos1 = createVec2Float64();
     const touch0Vec = createVec2Float64();
+    const lastMiddleTouch = createVec2Float64();
+    const currentMiddleTouch = createVec2Float64();
 
     const lastCanvasTouchPosList = [];
     const canvas = this.#view.htmlElement;
@@ -215,8 +210,12 @@ class TouchPanRotateAndDollyHandler {
         getCanvasPosFromEvent(touch0, tapCanvasPos0);
         getCanvasPosFromEvent(touch1, tapCanvasPos1);
 
-        const lastMiddleTouch = geometricMeanVec2(lastCanvasTouchPosList[0], lastCanvasTouchPosList[1]);
-        const currentMiddleTouch = geometricMeanVec2(<any>tapCanvasPos0, <any>tapCanvasPos1);
+        // The gesture centre is the arithmetic midpoint of the two touches.
+        // Keep it separate from endpoint buffers, which are needed for pinch distance.
+        for (let i = 0; i < 2; i++) {
+          lastMiddleTouch[i] = (lastCanvasTouchPosList[0][i] + lastCanvasTouchPosList[1][i]) / 2;
+          currentMiddleTouch[i] = (tapCanvasPos0[i] + tapCanvasPos1[i]) / 2;
+        }
 
         const touchDelta = createVec2Float64();
 
@@ -229,7 +228,7 @@ class TouchPanRotateAndDollyHandler {
 
         // Dollying
 
-        const d1 = distVec2([touch0.pageX, touch0.pageY], [touch1.pageX, touch1.pageY]);
+        const d1 = distVec2(tapCanvasPos0, tapCanvasPos1);
         const d2 = distVec2(lastCanvasTouchPosList[0], lastCanvasTouchPosList[1]);
 
         const dollyDelta = (d2 - d1) * configs.touchDollyRate;
@@ -258,6 +257,7 @@ class TouchPanRotateAndDollyHandler {
 
 
         states.pointerCanvasPos = currentMiddleTouch;
+        states.followPointerDirty = true;
       }
 
       for (let i = 0; i < numTouches; ++i) {

@@ -1,3 +1,4 @@
+import {createSectionPanel} from "./SectionPanel";
 import {createBoundariesPanel} from "./BoundariesPanel";
 import {createDataHealthPanel} from "./DataHealthPanel";
 import {createDiagnosticCenterPanel} from "./DiagnosticCenterPanel";
@@ -20,6 +21,7 @@ export function createDockviewComponents(Vue: any) {
     ViewerExplorerPanel: createExplorerHostPanel(Vue, "StudioViewerExplorerPanel", "viewer", "viewerExplorerPanel"),
     ViewerPanel: createViewerPanel(Vue),
     InspectorPanel: createInspectorPanel(Vue),
+    SectionPanel: createSectionPanel(Vue),
     RuntimeOverviewPanel: createRuntimeOverviewPanel(Vue),
     DiagnosticCenterPanel: createDiagnosticCenterPanel(Vue),
     BoundariesPanel: createBoundariesPanel(Vue),

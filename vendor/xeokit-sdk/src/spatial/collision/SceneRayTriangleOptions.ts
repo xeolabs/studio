@@ -1,7 +1,9 @@
-/**
- * Optional settings on {@link intersectSceneRayTriangle}.
- */
+import type {Vec3} from "../../base/math/vector";
+
+/** Optional settings on {@link intersectSceneRayTriangle}. */
 export interface SceneRayTriangleOptions {
+  /** Reject a surface intersection and continue along the ray, for example through a section cut. */
+  acceptHit?: (worldPos: Vec3, objectId: string) => boolean;
   /** Minimum parametric distance along the ray. Defaults to `0`. */
   tMin?: number;
   /** Maximum parametric distance along the ray. Defaults to `Infinity`. */

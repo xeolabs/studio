@@ -23,13 +23,19 @@ export function createImportDialogComponent(Vue: any) {
     },
     template: `
       <el-dialog v-model="state.open" title="Import Model" class="import-dialog" width="680px" :append-to-body="true"
-        :close-on-click-modal="!state.loading" :close-on-press-escape="!state.loading" :show-close="!state.loading">
+        @closed="actions.cancelReplacement()" :close-on-click-modal="!state.loading" :close-on-press-escape="!state.loading" :show-close="!state.loading">
         <div class="import-workflow">
           <ImportResult v-if="state.result"/>
+          <section v-else-if="state.conflicts.length" class="import-conflicts" role="alert">
+            <strong>These elements are already loaded</strong>
+            <p>The following models would be replaced in this session:</p>
+            <ul><li v-for="model in state.conflicts" :key="model.sceneModelId || model.dataModelId">{{ model.title }}</li></ul>
+            <p>The incoming model has been checked. Choose Replace existing to use it, or Cancel to keep the current models.</p>
+          </section>
           <template v-else>
             <ImportSources/>
             <template v-if="dataSet">
-              <p class="import-destination">Creates a new {{ destination }}. Existing models remain loaded.</p>
+              <p class="import-destination">Adds a model to this session. You’ll be asked before replacing any existing elements.</p>
               <details v-if="state.plannedModelId" class="import-destination-details"><summary>Destination IDs</summary>
                 <div v-if="dataSet.loadsSceneGeometry !== false">SceneModel <code>{{ state.plannedModelId }}</code></div>
                 <div v-if="dataSet.loadsDataSemantics !== false">DataModel <code>{{ state.plannedModelId }}</code></div>
@@ -52,6 +58,10 @@ export function createImportDialogComponent(Vue: any) {
             <template v-if="state.result">
               <el-button @click="actions.reset()">Import another</el-button>
               <el-button type="primary" @click="run('file.import.close')">Done</el-button>
+            </template>
+            <template v-else-if="state.conflicts.length">
+              <el-button @click="actions.cancelReplacement()">Cancel</el-button>
+              <el-button type="primary" :disabled="state.loading" @click="actions.replaceExisting()">Replace existing</el-button>
             </template>
             <template v-else>
               <el-button @click="run('file.import.close')">{{ state.loading ? 'Run in Background' : 'Cancel' }}</el-button>

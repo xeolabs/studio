@@ -371,6 +371,11 @@ export class WebGPURenderer implements Renderer {
     this.events.onRendererDestroyed.dispatch(this, true);
   }
 
+  /** Live output for image overlays. Copy during onViewRendered when using WebGPU. */
+  getRenderedCanvas(view: View): HTMLCanvasElement | null {
+    return this._viewer === view.viewer && view.htmlElement instanceof HTMLCanvasElement ? view.htmlElement : null;
+  }
+
   /**
    * Performs a renderer-backed pick in a View.
    *

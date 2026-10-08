@@ -208,6 +208,7 @@ export function intersectSceneRayTriangle(
         localHit[1] = loy + ldy * tHit;
         localHit[2] = loz + ldz * tHit;
         transformPoint3(mesh.worldMatrix as Mat4, localHit, worldHit);
+        if (options?.acceptHit && !options.acceptHit(worldHit, aabbHit.objectId)) continue;
 
         if (pickSurfaceNormal) {
           localHit[0] = v0x; localHit[1] = v0y; localHit[2] = v0z;

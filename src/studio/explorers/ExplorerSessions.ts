@@ -5,6 +5,7 @@ export interface ExplorerSession {
   branches: Map<string, boolean>;
   collectionBranches: Map<string, {expanded: boolean; pageIndex: number}>;
   focusedNodeId: string;
+  activeNodeId: string;
   scrollTop: number;
   scrollLeft: number;
   search: {query: string; browsing: boolean; limit: number; scrollTop: number};
@@ -17,7 +18,7 @@ export class ExplorerSessions {
   get(source: ExplorerSource): ExplorerSession {
     let session = this.sessions.get(source);
     if (!session) {
-      session = {branches: new Map(), collectionBranches: new Map(), focusedNodeId: "", scrollTop: 0, scrollLeft: 0,
+      session = {branches: new Map(), collectionBranches: new Map(), focusedNodeId: "", activeNodeId: "", scrollTop: 0, scrollLeft: 0,
         search: {query: "", browsing: false, limit: EXPLORER_SEARCH_LIMIT, scrollTop: 0}};
       this.sessions.set(source, session);
     }

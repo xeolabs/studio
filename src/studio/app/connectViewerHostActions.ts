@@ -44,7 +44,7 @@ export function connectViewerHostActions(params: ConnectViewerHostActionsParams)
     viewerPanelResizeObserver = typeof ResizeObserver !== "undefined"
       ? new ResizeObserver(requestRender)
       : null;
-    viewerPanelResizeObserver?.observe(panel);
+    viewerPanelResizeObserver?.observe(container);
     requestRender();
   };
   actions.unmounted = () => {

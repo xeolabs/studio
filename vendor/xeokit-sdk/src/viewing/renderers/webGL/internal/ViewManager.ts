@@ -325,6 +325,11 @@ export class ViewManager {
     return this._renderContext.webglCanvasElement;
   }
 
+  /** Live output for the requested view, excluding inactive-view snapshots. */
+  getRenderedCanvas(view: View): HTMLCanvasElement | null {
+    return this._activeView?.view === view ? this._renderContext?.webglCanvasElement ?? null : null;
+  }
+
   /**
    * Reinitializes GPU and render state after a WebGL context restoration event.
    *

@@ -73,6 +73,7 @@ export class DistanceMeasurement {
   private readonly _labelZ:   HTMLDivElement;
 
   private _destroyed = false;
+  private readonly _formatLength: (length: number) => string;
 
   /** @internal */
   constructor(
@@ -82,6 +83,7 @@ export class DistanceMeasurement {
     htmlRoot: HTMLDivElement,
   ) {
     this.id = id;
+    this._formatLength = params.formatLength ?? formatLength;
     this._origin = [params.origin[0], params.origin[1], params.origin[2]];
     this._target = [params.target[0], params.target[1], params.target[2]];
     this._visible = params.visible !== false;
@@ -197,7 +199,7 @@ export class DistanceMeasurement {
     // through the corner of the screen).
     const anyBehind =
       pO[2]  <= 0 || pT[2]  <= 0 ||
-      pK1[2] <= 0 || pK2[2] <= 0;
+      (this._axisVisible && (pK1[2] <= 0 || pK2[2] <= 0));
 
     if (anyBehind || !this._visible) {
       this._setOverlayVisible(false);
@@ -220,10 +222,10 @@ export class DistanceMeasurement {
     const dy = t[1] - o[1];
     const dz = t[2] - o[2];
 
-    setLabel(this._labelLen, mid(pO[0], pT[0]),  mid(pO[1], pT[1]),  this.length);
-    setLabel(this._labelX,   mid(pO[0], pK1[0]), mid(pO[1], pK1[1]), Math.abs(dx));
-    setLabel(this._labelY,   mid(pK1[0], pK2[0]), mid(pK1[1], pK2[1]), Math.abs(dy));
-    setLabel(this._labelZ,   mid(pK2[0], pT[0]),  mid(pK2[1], pT[1]),  Math.abs(dz));
+    setLabel(this._labelLen, mid(pO[0], pT[0]),  mid(pO[1], pT[1]),  this._formatLength(this.length));
+    setLabel(this._labelX,   mid(pO[0], pK1[0]), mid(pO[1], pK1[1]), this._formatLength(Math.abs(dx)));
+    setLabel(this._labelY,   mid(pK1[0], pK2[0]), mid(pK1[1], pK2[1]), this._formatLength(Math.abs(dy)));
+    setLabel(this._labelZ,   mid(pK2[0], pT[0]),  mid(pK2[1], pT[1]),  this._formatLength(Math.abs(dz)));
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────
@@ -339,6 +341,7 @@ function makeDot(htmlRoot: HTMLDivElement, color: string): HTMLDivElement {
 
 function makeLabel(htmlRoot: HTMLDivElement, bg: string, fg: string): HTMLDivElement {
   const el = document.createElement("div");
+  el.className = "xeokit-distance-label";
   Object.assign(el.style, {
     position:        "absolute",
     transform:       "translate(-50%, -50%)",
@@ -377,10 +380,10 @@ function setDot(el: HTMLDivElement, x: number, y: number): void {
  * by setting label `textContent` directly if a unit-aware formatter
  * is needed.
  */
-function setLabel(el: HTMLDivElement, x: number, y: number, value: number): void {
+function setLabel(el: HTMLDivElement, x: number, y: number, value: string): void {
   el.style.left = `${x}px`;
   el.style.top  = `${y}px`;
-  el.textContent = formatLength(value);
+  el.textContent = value;
 }
 
 function formatLength(v: number): string {

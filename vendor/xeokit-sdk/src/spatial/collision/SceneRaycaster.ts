@@ -1,4 +1,5 @@
 import {SDKErrorType, type SDKResult} from "../../base/core";
+import {OrthoProjectionType} from "../../base/constants";
 import {createVec3Float64, type Vec3, type Vec3Float} from "../../base/math/vector";
 import type {Scene} from "../../model/scene";
 import type {View} from "../../viewing/viewer";
@@ -100,7 +101,11 @@ export class SceneRaycaster {
         params.canvasPos, 1,
         this.#screenPos, this.#viewPos, this.#worldPosFar
       );
-      const eye = camera.eye;
+      // Orthographic rays start at the cursor on the near plane, not the eye.
+      const eye = camera.projectionType === OrthoProjectionType ? createVec3Float64() : camera.eye;
+      if (camera.projectionType === OrthoProjectionType) {
+        camera.projection.unproject(params.canvasPos, -1, this.#screenPos, this.#viewPos, eye);
+      }
       originX = eye[0]; originY = eye[1]; originZ = eye[2];
       dirX = this.#worldPosFar[0] - eye[0];
       dirY = this.#worldPosFar[1] - eye[1];
@@ -149,10 +154,13 @@ export class SceneRaycaster {
     const origin: Vec3 = [originX, originY, originZ];
     const dir:    Vec3 = [dirX,    dirY,    dirZ];
 
+    const planes = Object.values(view?.sectionPlanes || {}).filter(plane => plane.active);
     const triHit = intersectSceneRayTriangle(this.collisionIndex, origin, dir, {
       tMin: params.tMin,
       tMax: params.tMax,
       filter: combinedFilter,
+      acceptHit: planes.length ? (pos, id) => view!.objects[id]?.clippable === false || planes.every(plane =>
+        plane.dir[0] * pos[0] + plane.dir[1] * pos[1] + plane.dir[2] * pos[2] + plane.dist <= 1e-7) : undefined,
       pickSurfaceNormal: params.pickSurfaceNormal === true
     });
 

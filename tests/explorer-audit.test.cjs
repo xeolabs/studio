@@ -221,3 +221,14 @@ test("revealing a row scrolls the tree but never Dockview's outer workspace", ()
     assert.equal(workspace.scrollTop, 0);
   } finally { global.getComputedStyle = previous; }
 });
+
+test("building names and floor context rank ahead of incidental ID matches, across result pages", async () => {
+  const incidental = Array.from({length: 150}, (_, i) => ({id: `guid-2-${i}`, title: "Level 1", type: "IfcBuildingStorey", path: []}));
+  const floor = {id: "floor-second", title: "Level 2", type: "IfcBuildingStorey", path: []};
+  const wall = {id: "wall-second", title: "External wall", type: "IfcWall", context: "Level 2", path: []};
+  const result = await searchTreeEntries([...incidental, wall, floor], "Level 2");
+  assert.equal(result.total, 152);
+  assert.equal(result.entries.length, 100);
+  assert.deepEqual(result.entries.slice(0, 2), [floor, wall]);
+  assert.equal((await searchTreeEntries([floor, wall], "wall-second")).entries[0], wall);
+});

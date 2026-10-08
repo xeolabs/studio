@@ -7,6 +7,8 @@ import type {Vec3} from "../../../base/math/vector";
  * the length and the X/Y/Z component decomposition each frame.
  */
 export interface DistanceMeasurementParams {
+  /** Formats a world-space length, including any desired unit conversion and suffix. */
+  formatLength?: (length: number) => string;
 
   /**
    * Optional id. If omitted, the plugin assigns one (numeric, monotonic).

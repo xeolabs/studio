@@ -27,7 +27,7 @@ import type {
 } from "@xeokit/sdk/model/scene";
 import type {SceneAnimation, SceneAnimationChannelParams} from "@xeokit/sdk/model/scene/animation";
 import {COORDINATE_SYSTEM_PRESETS, type CoordinateSystemPreset} from "../../coordinateSystem";
-import {CameraFlightAnimation} from "@xeokit/sdk/viewing/cameraFlight";
+import {StudioCameraFlight as CameraFlightAnimation} from "../../services/StudioCameraFlight";
 import type {Viewer, View} from "@xeokit/sdk/viewing/viewer";
 
 export type SceneTreeNodeKind =

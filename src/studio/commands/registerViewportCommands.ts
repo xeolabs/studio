@@ -2,6 +2,7 @@ import type {Scene} from "@xeokit/sdk/model/scene";
 import type {View} from "@xeokit/sdk/viewing/viewer";
 import type {CommandRegistry} from "./CommandRegistry";
 import type {SelectionService} from "../services/SelectionService";
+import {viewIsolation} from "../services/ViewIsolation";
 import {ViewportCameraService} from "../services/ViewportCameraService";
 import {commandObjectId} from "./objectCommandTarget";
 import {
@@ -19,10 +20,19 @@ export interface RegisterViewportCommandsParams {
   selectSceneObject: (sceneObjectId: string | null) => void;
   selectionService: SelectionService;
   view: View;
+  workspace?: {isolationLabel: string};
+  sectionView?: {isPlan: () => boolean; fitPlan: () => void; returnTo3D: () => void};
 }
 
 export function registerViewportCommands(params: RegisterViewportCommandsParams): () => void {
   const camera = new ViewportCameraService(params.scene, params.view);
+  const isolation = viewIsolation(params.view);
+  const unsubscribeIsolation = isolation.onChanged(label => { if (params.workspace) params.workspace.isolationLabel = label; });
+  params.commands.register({
+    id: "viewport.restoreIsolation", title: "Restore Previous Visibility", category: "View: Viewport",
+    enabled: () => !!isolation.label,
+    run: () => isolation.restore()
+  });
   const objectId = (payload?: unknown) => commandObjectId(payload, params.selectionService.selectedSceneObjectId);
   const hasTarget = (_context: unknown, payload?: unknown) => !!params.view.objects[objectId(payload) || ""];
   params.commands.register({
@@ -32,6 +42,18 @@ export function registerViewportCommands(params: RegisterViewportCommandsParams)
     enabled: (_context, payload) => Array.isArray(payload) && payload.some((id) => typeof id === "string" && !!params.view.objects[id]),
     run: (payload) => camera.fitObjects((payload as string[]).filter((id) => !!params.view.objects[id]))
   });
+  for (const [name, bin] of [["Xray", "xrayed"], ["Highlight", "highlighted"], ["Visibility", "visible"]] as const) {
+    params.commands.register({id: `viewport.toggle${name}`, title: `Toggle selection ${name.toLowerCase()}`, category: "View: Viewport", enabled: hasTarget,
+      checked: () => {
+        const object = params.view.objects[params.selectionService.selectedSceneObjectId || ""];
+        return !!object && (bin === "visible" ? object.visible : object.hasStyleBin(bin));
+      },
+      run: payload => {
+        const id = objectId(payload)!, object = params.view.objects[id];
+        if (bin === "visible") object.visible = !object.visible;
+        else params.view.setObjectsInStyleBin(bin, [id], !object.hasStyleBin(bin));
+      }});
+  }
   const actionParams: StudioObjectActionParams = {
     dataExplorer: params.dataExplorer,
     scene: params.scene,
@@ -45,7 +67,7 @@ export function registerViewportCommands(params: RegisterViewportCommandsParams)
     title: "Fit All",
     category: "View: Viewport",
     shortcut: "Shift+F",
-    run: () => camera.fit()
+    run: () => params.sectionView?.isPlan() ? params.sectionView.fitPlan() : camera.fit()
   });
   params.commands.register({
     id: "viewport.frameSelection",
@@ -158,7 +180,7 @@ export function registerViewportCommands(params: RegisterViewportCommandsParams)
     title: "Home View",
     category: "View: Viewport",
     shortcut: "Home",
-    run: () => camera.homeView()
+    run: () => params.sectionView?.isPlan() ? params.sectionView.returnTo3D() : camera.homeView()
   });
   params.commands.register({
     id: "viewport.copyCamera",
@@ -167,7 +189,7 @@ export function registerViewportCommands(params: RegisterViewportCommandsParams)
     shortcut: "Ctrl+Alt+C",
     run: () => copyCamera(params.view)
   });
-  return () => camera.destroy();
+  return () => { unsubscribeIsolation(); camera.destroy(); };
 }
 
 function clearStyleBin(view: View, styleBinId: string): void {

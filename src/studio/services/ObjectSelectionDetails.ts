@@ -8,6 +8,7 @@ export interface ObjectPropertyRow {
   readonly name: string;
   readonly value: string;
   readonly setName: string;
+  readonly setId: string;
 }
 
 export interface ObjectSelectionDetails {
@@ -19,6 +20,7 @@ export interface ObjectSelectionDetails {
   readonly type: string;
   readonly schema: string;
   readonly description: string;
+  readonly floors: Array<{id: string; name: string}>;
   readonly propertyRows: ObjectPropertyRow[];
   readonly aabb: AABB3 | null;
 }
@@ -62,6 +64,7 @@ export class ObjectSelectionDetailsResolver {
       type: dataObject?.type || "SceneObject",
       schema: dataObject?.schema || "",
       description: dataObject?.description || "",
+      floors: dataObject ? collectFloors(dataObject) : [],
       propertyRows: dataObject ? collectPropertyRows(dataObject.propertySets || []) : [],
       aabb: getSceneObjectAABB(sceneObject)
     };
@@ -86,11 +89,35 @@ export class ObjectSelectionDetailsResolver {
   }
 }
 
+/** Follow spatial parents only: classifications and type links do not assign floors. */
+function collectFloors(object: DataObject): Array<{id: string; name: string}> {
+  const floors = new Map<string, {id: string; name: string}>();
+  const visited = new Set<DataObject>();
+  const queue = [object];
+  for (let i = 0; i < queue.length; i++) {
+    const current = queue[i];
+    if (visited.has(current)) continue;
+    visited.add(current);
+    if (current.type === "IfcBuildingStorey") {
+      floors.set(current.id, {id: current.id, name: current.name || current.id});
+      continue;
+    }
+    // In the SDK, `relating` holds incoming relationships to this object.
+    for (const type of ["IfcRelContainedInSpatialStructure", "IfcRelAggregates", "IfcRelNests"]) {
+      for (const relationship of current.relating?.[type] || []) {
+        queue.push(relationship.relatingObject);
+      }
+    }
+  }
+  return [...floors.values()];
+}
+
 function collectPropertyRows(propertySets: readonly PropertySet[]): ObjectPropertyRow[] {
   const rows: ObjectPropertyRow[] = [];
   for (const propertySet of propertySets) {
     for (const property of propertySet.properties) {
       rows.push({
+        setId: propertySet.id,
         setName: propertySet.name || propertySet.type || propertySet.id,
         name: property.name,
         value: formatValue(property.value)

@@ -15,6 +15,7 @@ export interface IFCTreeViewParams {
   view?: View;
   initialExpandDepth?: number;
   vue?: any;
+  commands?: {execute(id: string, payload?: unknown): void};
 }
 
 export class IFCTreeView {
@@ -32,7 +33,7 @@ export class IFCTreeView {
   static async create(params: IFCTreeViewParams): Promise<IFCTreeView> {
     const Vue = params.vue || await loadVue();
     const treeView = new IFCTreeView(params, Vue);
-    await treeView._mount(params.container, Vue);
+    await treeView._mount(params.container, Vue, params.commands);
     await treeView.store.expandToDepth(params.initialExpandDepth ?? 3);
     return treeView;
   }
@@ -46,7 +47,7 @@ export class IFCTreeView {
 
   async revealNode(id: string): Promise<void> { await this._tree?.reveal(id); }
 
-  private async _mount(container: HTMLElement, Vue: any): Promise<void> {
+  private async _mount(container: HTMLElement, Vue: any, commands?: {execute(id: string, payload?: unknown): void}): Promise<void> {
     const icons = await loadExplorerIcons();
     const DataObjectTreeNode = createDataObjectTreeNodeComponent(icons.SlidersHorizontal);
     const PagedTree = createPagedTree(Vue, DataObjectTreeNode, icons);
@@ -66,7 +67,7 @@ export class IFCTreeView {
         <section class="xeokit-data-tree" :class="{ 'is-busy': state.busy }">
           <header class="xeokit-data-tree-header">
             <div>
-              <h1>IFC Structure</h1>
+              <h1>Building</h1>
               <p>{{ state.roots.length }} root object{{ state.roots.length === 1 ? '' : 's' }}</p>
             </div>
           </header>
@@ -74,6 +75,7 @@ export class IFCTreeView {
         </section>
       `
     });
+    this._app.provide("commands", commands || null);
     this._app.mount(container);
   }
 }

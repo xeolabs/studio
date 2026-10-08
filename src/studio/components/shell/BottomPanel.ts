@@ -57,10 +57,12 @@ export function createBottomPanelComponent(Vue: any, params: BottomPanelComponen
           document.body.classList.remove("is-resizing-bottom-panel");
           window.removeEventListener("pointermove", onPointerMove, true);
           window.removeEventListener("pointerup", onPointerUp, true);
+          window.removeEventListener("pointercancel", onPointerUp, true);
           params.notifyLayoutChanged();
         };
         window.addEventListener("pointermove", onPointerMove, true);
         window.addEventListener("pointerup", onPointerUp, true);
+        window.addEventListener("pointercancel", onPointerUp, true);
         event.preventDefault();
       };
       const runCommand = (commandId: string) => {
@@ -103,7 +105,7 @@ export function createBottomPanelComponent(Vue: any, params: BottomPanelComponen
             {{ tab.label }}
           </button>
           <input v-if="workspace.bottomPanelOpen" v-model="filter" class="bottom-panel-filter" :aria-label="'Filter ' + workspace.bottomPanelTab" placeholder="Filter..." @keydown.esc.stop="filter = ''">
-          <button type="button" class="bottom-panel-toggle" @click="runCommand('bottom.toggle')">
+          <button type="button" class="bottom-panel-toggle" :aria-expanded="workspace.bottomPanelOpen" aria-label="Toggle activity panel" @click="runCommand('bottom.toggle')">
             {{ workspace.bottomPanelOpen ? 'Hide' : 'Show' }}
           </button>
         </header>

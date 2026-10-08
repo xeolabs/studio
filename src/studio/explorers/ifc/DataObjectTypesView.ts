@@ -14,6 +14,7 @@ export interface IFCTypesViewParams {
   viewer: Viewer;
   view?: View;
   vue?: any;
+  commands?: {execute(id: string, payload?: unknown): void};
 }
 
 export class IFCTypesView {
@@ -31,7 +32,7 @@ export class IFCTypesView {
   static async create(params: IFCTypesViewParams): Promise<IFCTypesView> {
     const Vue = params.vue || await loadVue();
     const typesView = new IFCTypesView(params, Vue);
-    await typesView._mount(params.container, Vue);
+    await typesView._mount(params.container, Vue, params.commands);
     return typesView;
   }
 
@@ -44,7 +45,7 @@ export class IFCTypesView {
 
   async revealNode(id: string): Promise<void> { await this._tree?.reveal(id); }
 
-  private async _mount(container: HTMLElement, Vue: any): Promise<void> {
+  private async _mount(container: HTMLElement, Vue: any, commands?: {execute(id: string, payload?: unknown): void}): Promise<void> {
     const icons = await loadExplorerIcons();
     const DataObjectTreeNode = createDataObjectTreeNodeComponent(icons.SlidersHorizontal);
     const PagedTree = createPagedTree(Vue, DataObjectTreeNode, icons);
@@ -64,14 +65,15 @@ export class IFCTypesView {
         <section class="xeokit-data-tree" :class="{ 'is-busy': state.busy }">
           <header class="xeokit-data-tree-header">
             <div>
-              <h1>IFC Types</h1>
-              <p>{{ state.roots.length }} type group{{ state.roots.length === 1 ? '' : 's' }}</p>
+              <h1>Categories</h1>
+              <p>{{ state.roots.length }} categor{{ state.roots.length === 1 ? 'y' : 'ies' }}</p>
             </div>
           </header>
           <PagedTree class="xeokit-data-tree-roots" :store="store" :ref="bindTree"/>
         </section>
       `
     });
+    this._app.provide("commands", commands || null);
     this._app.mount(container);
   }
 }

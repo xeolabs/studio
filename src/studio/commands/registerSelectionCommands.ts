@@ -20,8 +20,11 @@ export function registerSelectionCommands(params: RegisterSelectionCommandsParam
     title: "Clear Selection",
     category: "Edit: Selection",
     shortcut: "Escape",
-    enabled: (context) => !!context.selectedObjectId,
-    run: () => params.selectionService.clear()
+    enabled: (context) => !!context.selectedObjectId || (!!params.workspace.toolMode && params.workspace.toolMode !== "select"),
+    run: () => {
+      if (params.workspace.toolMode && params.workspace.toolMode !== "select") params.workspace.toolMode = "select";
+      else params.selectionService.clear();
+    }
   });
   params.commands.register({
     id: "selection.copyId",
@@ -133,7 +136,7 @@ export function registerSelectionCommands(params: RegisterSelectionCommandsParam
   });
   params.commands.register({
     id: "selection.inspect",
-    title: "Inspect Selection",
+    title: "Selection Properties",
     category: "Edit: Selection",
     enabled: (context) => !!context.selectedObjectId,
     run: () => {

@@ -27,8 +27,8 @@ test("performance View disables optional passes and texture sampling while retai
 
 test("WebGPU uses the lean large-model path with bundles and no depth/edge/timing passes", () => {
   const settings = createStudioPerformanceWebGPUSettings();
-  assert.deepEqual(settings.renderConfigs, {depthPrepass: false, edges: false, triangleColorMode: "flat",
-    renderBundleCaching: true, transparentSortStrategy: "segment", logDepth: false, gpuTimestamps: false});
+  assert.deepEqual(settings.renderConfigs, {depthPrepass: false, edges: true, triangleColorMode: "flat",
+    renderBundleCaching: true, transparentSortStrategy: "segment", logDepth: true, gpuTimestamps: false});
   assert.equal(settings.requestAdapterOptions.powerPreference, "high-performance");
   assert.equal(settings.memoryConfigs.frustumCulling, true);
   const service = fs.readFileSync(path.resolve(__dirname, "../src/studio/services/RendererService.ts"), "utf8");

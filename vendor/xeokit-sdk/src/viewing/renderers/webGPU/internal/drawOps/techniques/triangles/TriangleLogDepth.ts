@@ -53,12 +53,18 @@ export function triangleLogDepthReturn(logDepth: boolean, colorExpression = "vec
   if (!logDepth) {
     return colorExpression;
   }
-  return `FragmentOutput(${colorExpression}, log2(max(1.0e-6, input.fragDepth)) * frame.depthParams.x * 0.5)`;
+  return `FragmentOutput(${colorExpression}, ${triangleFragmentDepth()})`;
 }
 
 /**
  * @internal
  */
 export function triangleLogDepthOnlyReturn(): string {
-  return "FragmentOutput(log2(max(1.0e-6, input.fragDepth)) * frame.depthParams.x * 0.5)";
+  return `FragmentOutput(${triangleFragmentDepth()})`;
+}
+
+function triangleFragmentDepth(): string {
+  // Fragment-stage position.z already contains the projected depth in [0, 1].
+  // Use it for ortho in every pass, including picking, edges and the prepass.
+  return "select(input.position.z, log2(max(1.0e-6, input.fragDepth)) * frame.depthParams.x * 0.5, frame.depthParams.y > 0.5)";
 }

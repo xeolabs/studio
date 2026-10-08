@@ -1,0 +1,93 @@
+/* Main tools remain mounted outside the canvas; flyouts and camera tools sit above its renderer layer. */
+.app-shell .studio-workbench { display: grid; grid-template-columns: 68px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 0; background: #eef2f6; }
+.workspace-toolbar { display: flex; flex-direction: column; align-self: start; gap: 3px; padding: 6px; margin: 8px 4px; border: 1px solid #d1dce6; border-radius: 10px; background: #fff; box-shadow: 0 2px 7px #18375212; }
+.workspace-toolbar > button { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 3px; width: 46px; min-height: 49px; padding: 5px 0; border: 0; border-radius: 6px; background: transparent; color: #344f65; font: 600 10px/14px system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
+.workspace-toolbar svg { width: 20px; height: 20px; stroke-width: 1.7; }
+.workspace-toolbar small { font-size: 9px; }
+.workspace-toolbar button:hover { background: #eff5fa; }
+.workspace-toolbar button:is([aria-expanded="true"], [aria-pressed="true"]) { background: #e4f1fb; color: #1165a0; }
+:is(.workspace-toolbar, .viewer-tools-layer, .studio-tool-flyout) button:disabled { opacity: .4; cursor: default; }
+:is(.workspace-toolbar, .viewer-tools-layer, .studio-tool-flyout) :is(button, select):focus-visible { outline: 2px solid #1674b5; outline-offset: -2px; }
+.studio-tool-flyout { position: fixed; z-index: 220000001; box-sizing: border-box; width: 242px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow: auto; padding: 6px; border: 1px solid #c2d0dd; border-radius: 10px; background: white; color: #304c63; box-shadow: 0 8px 28px #112d4933; font: 13px system-ui, sans-serif; }
+.studio-tool-flyout button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; border: 0; border-radius: 6px; padding: 8px 10px; background: transparent; color: inherit; text-align: left; font: inherit; white-space: nowrap; cursor: pointer; }
+.studio-tool-flyout button:hover { background: #edf4fa; }
+.studio-tool-flyout button[aria-checked="true"] { color: #1469a4; background: #e8f3fc; }
+.studio-tool-flyout button[role="menuitemcheckbox"]::before { content: ''; width: 15px; height: 15px; border: 1px solid #9bb0c1; border-radius: 3px; box-sizing: border-box; }
+.studio-tool-flyout button[role="menuitemcheckbox"][aria-checked="true"]::before { content: '✓'; color: white; background: #2674ab; border-color: #2674ab; font-size: 12px; line-height: 14px; text-align: center; }
+.studio-tool-flyout button[role="menuitemradio"][aria-checked="true"]::after { content: '✓'; margin-left: auto; }
+.studio-tool-flyout button span { min-width: 0; }
+.studio-tool-flyout small { display: block; margin-top: 4px; font-size: 11px; color: #667d91; }
+.studio-tool-flyout svg, .viewer-tools-layer svg { width: 18px; height: 18px; flex: none; stroke-width: 1.8; }
+.studio-tool-flyout hr { border: 0; border-top: 1px solid #e1e8ef; margin: 6px 2px; }
+.viewer-tools-layer { position: fixed; z-index: 100002; pointer-events: none; color: #304c63; font: 12px system-ui, sans-serif; }
+.tool-surface { display: flex; align-items: center; gap: 2px; width: max-content; max-width: 100%; box-sizing: border-box; padding: 3px; border: 1px solid #cbd7e2; border-radius: 8px; background: #fffffff5; box-shadow: 0 2px 8px #1737551c; pointer-events: auto; }
+.viewer-tools-layer button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 36px; min-height: 36px; padding: 6px 8px; background: transparent; border: 0; border-radius: 5px; color: inherit; font: 600 12px system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
+.viewer-tools-layer button:hover { background: #edf4fa; }
+.viewer-tools-layer button[aria-pressed="true"] { background: #e4f1fb; color: #1469a4; }
+.viewer-context-stack { position: absolute; left: 10px; top: 10px; right: 10px; display: flex; flex-direction: column; align-items: start; gap: 6px; }
+.viewer-context-message > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding-left: 7px; }
+.viewer-context-message > button { flex: none; color: #1469a4; }
+.mode-message { border-color: #7cafd3; background: #f0f8ff; }
+.viewer-camera-tools { position: absolute; right: 10px; bottom: 10px; }
+.viewer-recovery { position: absolute; left: 10px; bottom: 10px; }
+.studio-tool-flyout .camera-zoom-row { display: flex; align-items: center; justify-content: space-between; }
+.studio-tool-flyout .camera-zoom-row button { width: 44px; justify-content: center; }
+.studio-tool-flyout .camera-pan-pad { display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 36px); justify-content: center; text-align: center; align-items: center; }
+.studio-tool-flyout .camera-pan-pad button { justify-content: center; min-height: 36px; padding: 4px; }
+.pan-up { grid-area: 1 / 2; } .pan-left { grid-area: 2 / 1; } .camera-pan-pad span { grid-area: 2 / 2; } .pan-right { grid-area: 2 / 3; } .pan-down { grid-area: 3 / 2; }
+.tool-help { margin: 8px 10px 4px; font-size: 11px; line-height: 1.5; color: #637a8d; }
+.viewer-tools-layer[data-narrow="true"] .viewer-context-stack { left: 6px; top: 6px; right: 6px; }
+.viewer-tools-layer[data-narrow="true"] .viewer-camera-tools { right: 6px; bottom: 6px; }
+.viewer-tools-layer[data-narrow="true"] .viewer-recovery { left: 6px; bottom: 6px; }
+.viewer-tools-layer[data-short="true"] .viewer-context-stack { right: 118px; }
+.viewer-tools-layer[data-short="true"] .viewer-camera-tools { top: 6px; bottom: auto; }
+@media (max-width: 959px) and (min-height: 601px), (max-width: 559px) {
+  .app-shell .studio-workbench { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 62px; }
+  .workspace-content { grid-row: 1; }
+  .workspace-toolbar { grid-row: 2; flex-direction: row; align-self: stretch; justify-content: space-around; gap: 4px; padding: 4px 6px; margin: 2px 6px 4px; border-radius: 10px; }
+  .workspace-toolbar > button { flex: 1; min-width: 44px; max-width: 90px; min-height: 48px; width: auto; font-size: 11px; }
+}
+@media (pointer: coarse) {
+  .viewer-tools-layer button { min-width: 40px; min-height: 40px; }
+  .studio-tool-flyout button { min-height: 44px; }
+  .loaded-models button.loaded-model-icon { min-width: 40px; min-height: 40px; }
+}
+.viewer-panel[data-plan="true"] { grid-template-rows: auto minmax(0, 1fr) auto; }
+.viewer-plan-controls { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 4px 8px; border-bottom: 1px solid #d2dce6; background: #f5f8fb; color: #304c63; }
+.viewer-plan-controls select { min-width: 65px; max-width: 200px; width: 0; flex: 1; min-height: 36px; border: 1px solid #d2dce6; border-radius: 5px; padding: 4px; color: inherit; background: white; font: 600 12px system-ui, sans-serif; }
+.viewer-plan-controls button { flex: none; min-height: 36px; border: 0; border-radius: 5px; padding: 6px 9px; color: inherit; background: transparent; font: 600 12px system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
+.viewer-plan-controls button[aria-pressed="true"] { background: #e4f1fb; color: #1469a4; }
+.viewer-plan-controls button:last-child { margin-left: auto; color: #1469a4; }
+.viewer-plan-controls :is(button,select):focus-visible { outline: 2px solid #1674b5; outline-offset: -2px; }
+@media (pointer: coarse) {
+  .viewer-plan-controls :is(button,select) { min-height: 40px; }
+  .viewer-plan-controls select { font-size: 16px; }
+}
+.inspector-header-actions > .tool-popover-trigger { min-height: 32px; padding: 6px 10px; border: 1px solid #b6c6d6; border-radius: 4px; background: white; color: #224d70; font: 600 12px system-ui, sans-serif; cursor: pointer; }
+.inspector-header-actions > .tool-popover-trigger:focus-visible { outline: 2px solid #1674b5; outline-offset: -2px; }
+
+.measurement-controls { display: flex; flex-direction: column; align-items: stretch; gap: 3px; max-width: min(100%, 400px); }
+.measurement-heading { display: flex; align-items: center; gap: 6px; padding-left: 7px; }
+.measurement-heading > span { flex: 1; min-width: 0; white-space: nowrap; font-weight: 600; }
+.measurement-help { margin: 0 7px; color: #526a7d; font-size: 11px; line-height: 1.4; }
+.measurement-settings { display: flex; align-items: center; gap: 4px; }
+.measurement-settings select { min-width: 54px; min-height: 36px; padding: 4px; border: 1px solid #c2d0dd; border-radius: 4px; background: white; color: inherit; font: inherit; }
+.measurement-snap { min-width: 43px; font-size: 11px; color: #2c6b51; }
+.measurement-list { max-height: 240px; overflow: auto; }
+.measurement-row { display: flex; align-items: stretch; border-radius: 6px; }
+.measurement-row[data-selected="true"] { background: #fff2e4; color: #864207; }
+.studio-tool-flyout .measurement-locate { flex: 1; min-width: 0; gap: 8px; padding: 7px 8px; }
+.measurement-number { flex: none; display: grid; place-items: center; min-width: 24px; height: 24px; padding: 0 2px; border-radius: 5px; background: #126dac; color: white; font-weight: 600; }
+.measurement-row[data-selected="true"] .measurement-number { background: #9a4b09; }
+.measurement-detail { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.measurement-detail small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-tool-flyout .measurement-delete { flex: 0 0 40px; width: 40px; justify-content: center; padding: 6px; color: #637a8d; }
+.studio-tool-flyout .measurement-delete:hover { background: #fff0ee; color: #a22d20; }
+.measurement-undo { display: flex; align-items: center; gap: 6px; padding-left: 7px; }
+.measurement-undo > span { flex: 1; min-width: 0; white-space: nowrap; }
+.measurement-undo button { color: #1469a4; flex: none; }
+@media (pointer: coarse) { .studio-tool-flyout .measurement-delete { flex-basis: 44px; width: 44px; } }
+@media (pointer: coarse) { .measurement-settings select { min-height: 40px; font-size: 16px; } }
+
+.measurement-touch-help { display: none; }
+@media (pointer: coarse) { .measurement-touch-help { display: inline; } .measurement-mouse-help { display: none; } }

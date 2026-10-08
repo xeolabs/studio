@@ -65,7 +65,7 @@ export class CoordinateSystem  {
         this._updated = updated;
         this._origin = createVec3Float64(<any>params?.origin || [0, 0, 0]);
         this._units = params?.units || "meters";
-        this._scaleToMeters = params?.scaleToMeters || 1;
+        this._scaleToMeters = params?.scaleToMeters;
         this._worldUp = createVec3Float32();
         this._worldRight = createVec3Float32();
         this._worldForward = createVec3Float32();
