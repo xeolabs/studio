@@ -55,11 +55,11 @@ export interface ImportDialogState {
 export function createImportDialogState(): ImportDialogState {
   return {
     open: false, loading: false, sourceMode: "file", sources: [], dataSetId: "", formatOverride: false,
-    coordinateMode: "source", basisId: "z-up", units: "meters", origin: [0, 0, 0], updateMode: "dynamic",
+    coordinateMode: "source", basisId: "z-up", units: "meters", origin: [0, 0, 0], updateMode: "static",
     frameAfterImport: true, statusText: "", errorText: "", errorDetails: "", sourceErrors: {},
     loadedModelId: "", plannedModelId: "", result: null, conflicts: [], slots: {},
     dataSets: IMPORT_DATA_SETS, bases: IMPORT_BASES.filter(basis => !!basis.basis),
     unitsOptions: ["meters", "millimeters", "inches", "feet"],
-    updateModes: [{id: "dynamic", label: "Dynamic"}, {id: "static", label: "Static"}],
+    updateModes: [{id: "static", label: "Static"}, {id: "dynamic", label: "Dynamic"}],
   };
 }

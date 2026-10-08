@@ -3,7 +3,7 @@ import {WEBGPU_RENDER_CONFIG_PROFILES, type WebGPURendererCreateParams} from "@x
 
 export function createStudioPerformanceWebGPUSettings(): WebGPURendererCreateParams {
   return {
-    memoryConfigs: {maxViews: 2, frustumCulling: true},
+    memoryConfigs: {maxViews: 2, frustumCulling: true, compactStreamPages: true, compactSealedStreamPages: true},
     requestAdapterOptions: {powerPreference: "high-performance"},
     renderConfigs: {...WEBGPU_RENDER_CONFIG_PROFILES.largeModel, edges: true, logDepth: true, gpuTimestamps: false}
   };

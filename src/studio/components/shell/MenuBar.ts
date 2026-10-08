@@ -197,6 +197,13 @@ export function createMenuBarComponent(Vue: any, params: MenuBarComponentParams)
         <div class="menu-bar-center"></div>
         <div class="menu-bar-right">
           <span class="renderer-live-dot" :data-ready="workspace.loaded && !workspace.rendererSwitching && !workspace.rendererError"></span>
+          <span v-if="workspace.bundledStreams?.length" class="stream-summary"
+            :title="workspace.bundledStreams.map(stream => stream.title + ': ' + (stream.error || stream.loaded + '/' + stream.total + ' chunks · ' + stream.phase)).join('; ')">
+            <span v-for="stream in workspace.bundledStreams" :key="stream.id" class="stream-summary-item" :data-phase="stream.phase">
+              {{ stream.phase === 'error' ? 'Stream failed' : stream.phase === 'complete' ? 'Loaded' : stream.phase === 'moving' ? 'Paused' : stream.phase === 'ready' ? (workspace.layoutMode === 'compact' ? 'Ready' : 'View loaded') : 'Loading' }}
+              <span v-if="stream.phase !== 'error' && stream.phase !== 'complete'">{{ stream.loaded }}/{{ stream.total }}</span>
+            </span>
+          </span>
           <span role="status">{{ workspace.rendererError ? 'Renderer error' : workspace.rendererSwitching ? 'Switching…' : workspace.loaded ? workspace.projectName : 'Loading…' }}</span>
         </div>
       </nav>

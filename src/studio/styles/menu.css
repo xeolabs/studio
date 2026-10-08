@@ -410,3 +410,13 @@
             color: #697482;
             font-size: 12px;
         }
+
+/* Stream progress remains readable without wrapping the application header. */
+.stream-summary { display: flex; gap: 8px; font-size: 11px; white-space: nowrap; }
+.stream-summary-item { display: inline-flex; gap: 4px; }
+.stream-summary-item[data-phase="error"] { color: #ffb4b4; }
+@media (max-width: 599px) {
+  .app-shell .menu-bar-right:has(.stream-summary) { max-width: 46vw; }
+  .menu-bar-right:has(.stream-summary) > [role="status"] { display: none; }
+  .stream-summary { min-width: 0; overflow: hidden; }
+}

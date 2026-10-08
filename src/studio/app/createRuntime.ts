@@ -1,3 +1,5 @@
+import {parseStartupOptions} from "./startupOptions";
+import {BundledModelsService} from "../services/BundledModelsService";
 import {Data} from "@xeokit/sdk/model/data";
 import {Scene} from "@xeokit/sdk/model/scene";
 import {Viewer} from "@xeokit/sdk/viewing/viewer";
@@ -6,16 +8,13 @@ import {RendererService, type RendererMode} from "../services/RendererService";
 import {createStudioPerformanceViewSettings} from "../services/studioPerformanceSettings";
 import {countRecord} from "../ui/formatters";
 import {
-  fetchArrayBuffer,
-  fetchJSON,
   mustElement,
   mustOk,
   setStatus
 } from "../runtime";
 
-const MODEL_BASE = `${import.meta.env.BASE_URL}models/Duplex`;
-
 export interface StudioRuntime {
+  bundledModelsService: BundledModelsService;
   data: Data;
   dataModel: any;
   diagnosticsService: DiagnosticsService;
@@ -36,6 +35,8 @@ export interface CreateRuntimeParams {
 
 export async function createRuntime(params: CreateRuntimeParams): Promise<StudioRuntime> {
   const {diagnosticsPanelState, initialRendererMode, workspace} = params;
+  const startup = parseStartupOptions(window.location.search);
+  workspace.setProjectName(startup.models.map(model => model.title).join(" + "));
   const data = new Data();
   const scene = new Scene();
   const viewer = new Viewer({scene});
@@ -60,10 +61,10 @@ export async function createRuntime(params: CreateRuntimeParams): Promise<Studio
       {id: "xrayed", priority: 100, fillAlpha: 0.18, edges: true, edgeColor: [0.35, 0.7, 1], edgeWidth: 1}
     ],
     camera: {
-      eye: [24.40, 23.70, 27.04],
-      look: [4.39, 8.90, 2.54],
-      up: [-0.56, -0.41, 0.71],
-      perspectiveProjection: {far: 20000},
+      eye: startup.camera.eye,
+      look: startup.camera.look,
+      up: startup.camera.up,
+      perspectiveProjection: {far: 20000, fov: startup.camera.fov},
       orthoProjection: {far: 20000}
     }
   }));
@@ -106,28 +107,23 @@ export async function createRuntime(params: CreateRuntimeParams): Promise<Studio
   if (rendererWarning) {
     diagnosticsService.record("app", "renderer.fallback", "warning", rendererWarning);
   }
-  const sceneModel = mustOk(scene.createModel({
-    id: "duplexSceneModel",
-    coordinateSystem: await fetchJSON(`${MODEL_BASE}/coordSys.json`),
-    updateMode: "static"
-  }));
-  const dataModel = mustOk(data.createModel({id: "duplexDataModel"}));
-
-  workspace.setStatus("Loading Duplex geometry and data...");
-  workspace.appendOutput(workspace.status, "Loader");
-  setStatus("status", workspace.status);
+  const bundledModelsService = new BundledModelsService({scene, data, view, workspace,
+    baseURL: new URL(import.meta.env.BASE_URL, window.location.href).href,
+    getRenderer: () => rendererService.renderer});
   try {
-    const {XGFLoader} = await import("@xeokit/sdk/formats/xgf");
-    const {DataModelImporter} = await import("@xeokit/sdk/formats/datamodel");
-    await new XGFLoader().load({fileData: await fetchArrayBuffer(`${MODEL_BASE}/xgf/model.xgf`), sceneModel});
-    await new DataModelImporter().load({fileData: await fetchJSON(`${MODEL_BASE}/datamodel/model.json`), dataModel});
+    await bundledModelsService.prepare(startup.models);
   } catch (error) {
+    bundledModelsService.destroy();
     diagnosticsService.record("app", "model.loadFailed", "error", String(error));
     throw error;
   }
+  const primary = bundledModelsService.initialModels[0];
+  const sceneModel = scene.models[primary.sceneModelId!];
+  const dataModel = primary.dataModelId ? data.models[primary.dataModelId] : undefined;
   refreshStatusItems();
 
   return {
+    bundledModelsService,
     data,
     dataModel,
     diagnosticsService,

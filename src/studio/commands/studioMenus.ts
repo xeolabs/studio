@@ -118,20 +118,5 @@ export const studioMenuSections = [
         {label: "Sun Study", commandId: C.view.toolWindow("sun-study")}
       ]}
     ]
-  },
-  {
-    id: "workspace",
-    label: "Workspace",
-    groups: [
-      {
-        label: "Activities",
-        items: [
-          {label: "Open Explorer Panels", commandId: C.activity.explorer},
-          {label: "Open Runtime Panels", commandId: C.activity.runtime},
-          {label: "Open Review Panels", commandId: C.activity.review},
-          {label: "Open Diagnostic Panels", commandId: C.activity.diagnose}
-        ]
-      }
-    ]
   }
 ];

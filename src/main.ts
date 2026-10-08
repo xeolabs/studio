@@ -160,6 +160,7 @@ async function main() {
   await layoutController.ready;
 
   const {
+    bundledModelsService,
     data,
     dataModel,
     diagnosticsService,
@@ -308,7 +309,7 @@ async function main() {
     workspace.measurements.visible, workspace.section.planFloorId, workspace.rendererSwitching], () => measurementService.sync());
   const loadedModelsService = new LoadedModelsService({
     scene, data, view, state: workspace, selection: selectionService, section: sectionViewService,
-    initialModels: [{id: "bundled:duplex", title: "Duplex", sceneModelId: sceneModel.id, dataModelId: dataModel.id}],
+    initialModels: bundledModelsService.initialModels,
     isBusy: () => importDialogState.loading || exportDialogState.loading || workspace.rendererSwitching
       || sceneHealthPanelState.applying,
     onChanged: () => {
@@ -333,6 +334,7 @@ async function main() {
       workspace.appendEvent("models", "unloaded", workspace.status);
     }
   });
+  bundledModelsService.onChanged = () => loadedModelsService.refresh();
   registerModelCommands(commands, loadedModelsService, createUnloadConfirmation(ElementPlus));
   const savedViewsService = new SavedViewsService({scene, view, section: sectionViewService, state: workspace.savedViews,
     getStorage: () => window.localStorage, getController: () => inputController,
@@ -399,7 +401,7 @@ async function main() {
     tilesService,
     viewerHostController,
     commandEventCleanup,
-    modelCommandsCleanup: () => {savedViewsService.destroy(); stopMeasurementsWatch(); measurementService.destroy(); viewHistory.destroy(); loadedModelsService.destroy();},
+    modelCommandsCleanup: () => {bundledModelsService.destroy(); savedViewsService.destroy(); stopMeasurementsWatch(); measurementService.destroy(); viewHistory.destroy(); loadedModelsService.destroy();},
     sectionCommandsCleanup: () => {stopPlanLabelsWatch(); planLabelsService.destroy(); sectionViewService.destroy();},
     viewportCommandsCleanup,
     viewportContextMenuCleanup
@@ -411,7 +413,9 @@ async function main() {
   workspace.finishTask(workspace.startTask("Start Studio", "Runtime, viewer, and default models initialized."), "success", "Studio workspace ready.");
   setStatus("status", workspace.status);
   markStudioExampleLoaded();
+  bundledModelsService.start();
   exposeDebugApi({
+    bundledModelsService,
     savedViewsService,
     viewHistory,
     loadedModelsService,

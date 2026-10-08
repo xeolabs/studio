@@ -28,12 +28,3 @@ test("Studio's Duplex dataset includes a valid IFC hierarchy and property refere
   const coordinateSystem = JSON.parse(fs.readFileSync(path.join(modelDirectory, "coordSys.json")));
   assert.equal(coordinateSystem.units, "meters");
 });
-
-test("Studio startup loads Duplex geometry and data", () => {
-  const runtime = fs.readFileSync(path.resolve(__dirname, "../src/studio/app/createRuntime.ts"), "utf8");
-  assert.match(runtime, /models\/Duplex/);
-  assert.match(runtime, /\/coordSys\.json/);
-  assert.match(runtime, /new XGFLoader\(\)/);
-  assert.match(runtime, /new DataModelImporter\(\)/);
-  assert.doesNotMatch(runtime, /WestRiverSideHospital|IFCLoader/);
-});

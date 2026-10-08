@@ -1,3 +1,4 @@
+import type {BundledStreamState} from "../services/BundledModelsService";
 import type {LoadedModel} from "../services/LoadedModelsService";
 import type {ObjectSelectionDetails} from "../services/ObjectSelectionDetails";
 import type {RendererMode} from "../services/RendererService";
@@ -58,7 +59,8 @@ export function createWorkspaceStore(Pinia: any) {
     state: () => ({
       status: "Loading Studio viewer...",
       loaded: false,
-      projectName: "Duplex",
+      projectName: "Studio",
+      bundledStreams: [] as BundledStreamState[],
       loadedModels: [] as LoadedModel[],
       modelsExpanded: true,
       rendererMode: "webgpu" as RendererMode,

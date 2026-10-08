@@ -1,16 +1,132 @@
 # xeokit Studio
 
-xeokit Studio is a workspace for exploring 3D models and the information they
-contain. It brings visualization, inspection, and model exchange together to
-help users understand geometry, relationships, and properties.
+xeokit Studio is a browser workspace for exploring architecture, engineering and
+construction models, built with xeokit. Inspect building information, review
+floor plans, take measurements and save useful views.
 
-The Models list in Explore, Floors, or Categories has Hide/Show, Fit, and Unload
-controls. Unload asks for confirmation before removing a model’s geometry and
-metadata from the session; source files are unchanged. Imports use readable filenames. If incoming elements conflict
-with a loaded model, Studio validates the import and offers Replace existing or
-Cancel before changing the current models.
+**[Open Studio](https://xeolabs.github.io/studio/)**
 
-## Run
+[![xeokit Studio on a desktop monitor and tablet, showing a building cutaway and a labelled floor plan](docs/images/studio-desktop-tablet.png)](https://xeolabs.github.io/studio/)
+
+[Desktop model review](docs/images/studio-desktop.png) · [Tablet floor plan](docs/images/studio-tablet.png)
+
+## Explore
+
+Studio opens with the bundled Duplex building. Import your own models from
+**More → Import model**, or use the File menu.
+
+| Tool | What you can do |
+| --- | --- |
+| **Explore** | Browse the building hierarchy, floors and element categories; search by name, type or ID. |
+| **Properties** | Inspect an element's name, type, floor and searchable property sets. |
+| **Floors** | Open a floor plan with adjustable cut height, outlines and labels that adapt to the available space. |
+| **Section** | Make horizontal or vertical cuts, move the cutting plane and flip its direction. |
+| **Measure** | Measure between two points with surface, edge and vertex snapping and an optional magnifying lens. |
+| **Saved views** | Keep named thumbnails with the camera, floor, cuts, visibility and viewing effects. |
+
+## Baku Stadium stream
+
+[![Baku Stadium roof connection in Studio; click to open this viewpoint](docs/images/studio-baku-stream.png)](https://xeolabs.github.io/studio/?models=baku&eye=-67.75803,116.28819,46.98897&look=-75.49979,118.42810,44.85021&up=-0.24801,0.06855,0.96633&fov=40)
+
+**[Open this Baku viewpoint](https://xeolabs.github.io/studio/?models=baku&eye=-67.75803,116.28819,46.98897&look=-75.49979,118.42810,44.85021&up=-0.24801,0.06855,0.96633&fov=40)**
+
+The SDK's Baku 4k XGF stream is bundled with Studio. Visible chunks load nearest
+the camera first, together with their shared geometry assets. Loading pauses
+while the camera moves and resumes 500 ms after it stops. Already loaded chunks
+stay in the scene; a completed view makes no further chunk requests until you
+move. Once every geometry chunk is resident and the renderer has caught up,
+the model is sealed and streaming stops. Unloading cancels the stream.
+
+Baku contains 3,776 geometry chunks and 244 shared asset chunks (about 226 MB
+including indexes). The initial view downloads only the chunks it needs. This
+stream includes geometry, without IFC property sets or a building hierarchy.
+
+### Open bundled models by URL
+
+Use catalogue IDs in `models`, separated by commas. With no `models` parameter,
+Studio opens Duplex. `model` is also accepted for a single selection.
+
+| Parameter | Value |
+| --- | --- |
+| `models` | `duplex`, `baku`, or `duplex,baku` |
+| `eye` | Camera position as `x,y,z` |
+| `look` | Camera target as `x,y,z` |
+| `up` | Camera up direction as `x,y,z` |
+| `fov` | Perspective field of view in degrees, from 1 to 175 |
+
+Camera coordinates use the scene's world frame: Z-up and meters for these
+bundled models. Omitted camera values use the first selected model's default
+view. Unknown model IDs and invalid cameras display an error before loading.
+Startup URLs select only models in the [bundled catalogue](src/studio/app/bundledModels.ts).
+
+```text
+?models=duplex
+?models=baku
+?models=duplex,baku&eye=-67.75803,116.28819,46.98897&look=-75.49979,118.42810,44.85021&up=-0.24801,0.06855,0.96633&fov=40
+```
+
+## Using Studio
+
+Drag to orbit, scroll or pinch to zoom, and use two fingers to pan. Select an
+element to inspect it; **Focus** frames it in the viewer. **Fit** brings the model
+back into view. Desktop panels dock beside the canvas; tablet tools open in a
+side panel that can be tucked away.
+
+**Effects** provides visibility, X-ray, highlight and isolation controls for an
+element or subtree. **Restore** returns from isolation. Undo and Redo recover
+visibility and effect changes; **More → Show all elements** reveals the model.
+
+In **Floors**, open a floor's subtree actions and choose **Plan**. The plan cut
+starts 1.2 m above the inferred floor surface. Adjust its height in **Section**,
+use **Labels** to choose a density, and toggle **Outlines** for clearer edges.
+**3D view** returns to the previous viewing context.
+
+With **Measure**, choose two points, or touch and slide to refine each endpoint.
+Choose metres, millimetres, feet or inches. Plan measurements stay horizontal and
+belong to their floor. Tap a measurement in the list to locate it; delete it with
+the adjacent button, or use Undo to recover a deletion. **Done** or Escape exits
+the tool.
+
+Open **More → Saved views** to save, reopen, rename or delete a view. Views stay
+in this browser across reloads and reappear when the same model set is loaded.
+Imported models must be loaded again. Measurements are kept for the current
+session and are removed when their source model is unloaded.
+
+## Models and formats
+
+Load models from local files or URLs. Format detection starts on **Auto** each
+time the import dialog opens. Conflicting imports offer **Replace existing** or
+**Cancel** before changing the current models. The Models list has Hide/Show,
+Fit and Unload controls; unloading asks for confirmation.
+
+| Data | Supported examples |
+| --- | --- |
+| Building models | IFC, XKT, XGF and .bim |
+| 3D interchange | GLB, OBJ, FBX, USDZ, PLY and 3DXML |
+| Point clouds and spatial data | LAS/LAZ, E57, 3D Tiles and Gaussian splats |
+| xeokit data | SceneModel JSON and DataModel JSON, including geometry/metadata pairs |
+
+**More → Export** writes selected models in a compatible format. XGF or Scene
+JSON with Data JSON preserves linked geometry and metadata for a round trip;
+other formats may change element IDs or omit unsupported information. The export
+dialog describes each format's limitations.
+
+The [import catalogue](src/studio/importing/IMPORT_DATA_SETS.ts) and
+[export registry](src/studio/services/exporters/exportFormatRegistry.ts) list the
+available formats. Some importers fetch decoder assets from a CDN. URL imports
+require the source server to allow browser access.
+
+## Graphics
+
+Rendering, picking and measurement tools use the **xeokit SDK**. Studio tries
+**WebGPU** first and falls back to **WebGL 2** when it is unavailable. Add
+`?renderer=webgl` to the URL to select WebGL explicitly; renderer controls are
+also available under **Advanced**.
+
+WebGPU requires browser and GPU support and a secure context: HTTPS or localhost.
+The screenshots show bundled models rendered with WebGL 2.
+
+## Run locally
 
 Use Node.js 20.19+ or 22.12+ and npm.
 
@@ -19,124 +135,33 @@ npm ci
 npm run dev
 ```
 
-Open the local URL printed by Vite. Studio tries WebGPU first and falls back to
-WebGL when it is unavailable. Append `?renderer=webgl` to choose WebGL explicitly.
+Open the local URL printed by Vite.
 
 ```sh
 npm test              # Studio regression tests
 npm run typecheck     # TypeScript checks
 npm run build         # Production site in dist/
-npm run preview       # Serve the production build locally
+npm run preview       # Preview the production build
 ```
 
-Deploy the contents of `dist/` to a static HTTP server. Relative asset URLs allow
-hosting under a subdirectory. Serve over HTTPS outside localhost for WebGPU.
+Deploy `dist/` to a static HTTP server. Relative asset URLs support hosting under
+a subdirectory.
 
-## Source layout
+## Development
 
-```text
-src/main.ts                 Application entrypoint
-src/studio/                 Vue components, state, explorers, services and styles
-src/studio/sunStudy/         Sun Study presentation controller
-public/models/Duplex/       Default geometry, metadata and coordinate system
-vendor/xeokit-sdk/src/      Unreleased xeokit v3 TypeScript source
-tests/                      Studio regression suite
-```
+The application lives in [`src/studio/`](src/studio/), with its entrypoint in
+[`src/main.ts`](src/main.ts). The bundled models are in
+[`public/models/`](public/models/), with [Baku dataset provenance](public/models/BakuStadium_xgfstream_4000/PROVENANCE.md). Regression tests are in
+[`tests/`](tests/).
 
-The application comes from `sdk-oct2/packages/website/examples/apps/studio`.
-Its Vue component factories and inline templates are preserved. Vite uses Vue's
-compiler-enabled build to compile those templates; see the
-[Vue tooling documentation](https://vuejs.org/guide/scaling-up/tooling.html#note-on-in-browser-template-compilation).
-Vue, UI styles, and icons are installed through npm and bundled locally.
+Studio includes an unreleased xeokit v3 source snapshot under
+[`vendor/xeokit-sdk/`](vendor/xeokit-sdk/). Vite and TypeScript resolve the local
+SDK directly, so a sibling SDK checkout is not required. Vue, UI styles and icons
+are bundled locally.
 
-The SDK is a local file dependency. Vite and TypeScript resolve `@xeokit/sdk/*`
-directly to `vendor/xeokit-sdk/src`, so no published SDK or sibling checkout is
-required. Snapshot details are in
-[vendor/xeokit-sdk/PROVENANCE.md](vendor/xeokit-sdk/PROVENANCE.md).
-To update it, copy the upstream SDK source into that directory, update the
-snapshot metadata and dependencies, and rerun the checks above. Keep generated
-CLI bundles, SDK tests, and source maps out of the snapshot. When v3 is released,
-replace the file dependency and remove the source aliases in `vite.config.ts`
-and `tsconfig.json`.
+To refresh the SDK, copy the upstream TypeScript source into
+`vendor/xeokit-sdk/src`, update its provenance, and rerun the checks above. Keep
+SDK tests, generated CLI bundles and source maps out of the snapshot, and retain
+the compatibility fix described in its provenance notes.
 
-The default model and application UI are served locally. Some optional SDK
-importers still fetch upstream decoder assets (including IFC and USDZ WASM)
-from their configured CDNs; those imports require network access. URL imports
-also depend on the remote server allowing browser access.
-
-The workspace adapts to phones, tablets, and desktops. Explore provides Building,
-Floors, and Categories views with search. Explore and Floors are available in the
-model toolbar at every size. Tap a tree row to activate it and reveal its subtree
-actions; visibility changes only when requested. On portrait phones, tools open in
-a bottom panel with collapsed, half-height, and expanded states. Tablets and
-short landscape screens use a side panel. The canvas resizes around the panel
-and stays interactive. Wide screens use the saved docking layout; the current
-tool follows when the window is resized.
-
-Section opens horizontal and vertical cuts with a position slider, Flip, and Clear.
-Use Plan in a floor's subtree actions, or choose a floor in the Section panel, to
-view that floor from above with orthographic pan and zoom. The plan cut starts
-1.2 m above the floor surface inferred from slabs or wall bases, and its height
-can be adjusted in metres. Outlines improves edge contrast and plan sharpness.
-The Labels menu offers Off, Sparse, Balanced, and Dense. Sparse is the default
-density; more labels fit as you zoom in or choose a denser setting, without a fixed
-count limit. Labels prioritize selected elements and rooms with located contents,
-then stairs, furniture, doors, and windows. Tiny, offscreen, clipped, or overlapping
-labels stay hidden. Labels settle after navigation and avoid camera controls and
-open flyouts. A slim
-plan toolbar provides the floor picker, Labels, Outlines, and 3D view. Return to 3D restores
-the previous camera, visibility, isolation session, visual settings, and section cuts, even after
-switching floors. Floor plans use the model geometry and IFC spatial relationships.
-
-The main toolbar is a compact rail on wide screens and a bottom bar on phones.
-Select opens interaction modes: Select to inspect, Hide to remove tapped elements
-from view, and X-ray to toggle their transparency. Done or Escape returns to Select.
-Fit stays beside the model; its camera menu provides zoom, pan, Home, and full screen.
-More provides Saved views, import, export, Show all, Clear effects, and Sun study.
-
-Saved views (also in the View menu) stores named thumbnails with the camera,
-floor plan and cut height, section cuts, hidden elements, X-ray/highlight effects,
-isolation, and plan label settings. Tap a thumbnail to reopen a view; rename or
-delete it using the adjacent buttons. Undo delete restores the last deleted view.
-Views are kept in this browser across reloads and appear when the same model set
-is loaded, matched by source names, element IDs, bounds, and coordinates. Imported
-models must be reloaded before opening their views. A recalled floor plan returns
-to the 3D context from which it was opened. Measurements remain session-only and
-are not stored with a saved view.
-
-Measure places a distance between two surface points. In a floor plan it measures
-horizontal distance; in 3D it measures the full distance. Click two points, or touch
-and slide to refine each endpoint before releasing. Two fingers pan and zoom.
-Snap finds nearby vertices and edges; the optional 3× lens magnifies the placement
-area and marks the snapped point. Use m, mm, ft, or in for display units. Cancel
-point discards an unfinished measurement; Done or Escape leaves the tool. The
-measurement list locates and highlights a distance when you tap its row. Matching
-numbers identify distances in the model and list; floor names identify plan distances.
-Locating a plan distance opens its floor, while locating a 3D distance returns to 3D.
-Use the separate trash button to delete a distance, or Clear all to remove them all;
-Undo restores deleted distances, including after the list is emptied. Plan measurements
-stay with their floor. Measurements last for the current session and are removed,
-including from deletion history, when their source model is unloaded.
-
-Selecting an element shows its name and type with Properties, Focus, and Effects.
-Effects has Visible, X-ray, and Highlight toggles plus Isolate. Opening Properties
-moves the same actions into its header. Undo and Redo appear after visibility,
-isolation, X-ray, or highlight changes, including subtree and model visibility.
-Use Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z or the Edit menu. History keeps the last 30
-view changes; model loading/unloading and floor-plan transitions start a new
-history. Camera navigation and selection do not add history entries.
-Properties starts with the element name, type, floor, and
-searchable property sets. Long values wrap, and SDK links, geometry bounds,
-copy actions, and raw JSON are available under Advanced. Floor names come from
-IFC spatial relationships; missing data is shown as not provided.
-Isolate shows a named isolation indicator with Restore, which returns to the
-visibility state before isolation. Repeated isolation keeps that original return
-point. Show all reveals every element and exits isolation. Selection style in
-Subtree Effects controls appearance, independently of the element being inspected.
-Explorer searches, active rows and tree state, plus the inspector's tab and scroll
-position, survive layout changes. Activity logs and detailed status start hidden;
-open them, technical explorers or renderer settings from Advanced. Compact screens
-collect the application menus under Menu. Dialogs keep their actions visible
-while their contents scroll.
-
-The upstream license is preserved in [LICENSE.md](LICENSE.md).
+[Code license](LICENSE.md) · [SDK snapshot and provenance](vendor/xeokit-sdk/PROVENANCE.md)

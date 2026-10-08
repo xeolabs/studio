@@ -31,6 +31,8 @@ test("WebGPU uses the lean large-model path with bundles and no depth/edge/timin
     renderBundleCaching: true, transparentSortStrategy: "segment", logDepth: true, gpuTimestamps: false});
   assert.equal(settings.requestAdapterOptions.powerPreference, "high-performance");
   assert.equal(settings.memoryConfigs.frustumCulling, true);
+  assert.equal(settings.memoryConfigs.compactStreamPages, true);
+  assert.equal(settings.memoryConfigs.compactSealedStreamPages, true);
   const service = fs.readFileSync(path.resolve(__dirname, "../src/studio/services/RendererService.ts"), "utf8");
   assert.match(service, /WebGPURenderer\.create\(createStudioPerformanceWebGPUSettings\(\)\)/);
   assert.match(service, /maybeSetInfiniteGrid\(renderer, false\)/);
