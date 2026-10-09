@@ -103,7 +103,7 @@ export class BundledModelsService {
     };
     const controller = new XGFViewStreamController({
       index, sceneModel: model, view: this.params.view,
-      batchSize: 4, fetchConcurrency: 2, commitFrameBudgetMs: 0, progressCadenceMs: 100,
+      batchSize: 4, fetchConcurrency: 6, commitFrameBudgetMs: 0, progressCadenceMs: 100,
       frustumOnly: true, minProjectedChunkSizePixels: 3, chunkPriorityTarget: "eye", cameraDebounceMs: 140,
       enableLRUEviction: false, cacheFileData: false,
       loadOptions: {getFileData: async (manifest, signal?: AbortSignal) => {

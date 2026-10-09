@@ -20,6 +20,7 @@ interface FileDataCacheEntry {
   token: number | undefined;
   controller: AbortController;
   active: boolean;
+  settled: boolean;
   aborted: boolean;
   releaseAfterActive: boolean;
   resolve: (value: ArrayBuffer | PromiseLike<ArrayBuffer>) => void;
@@ -1167,6 +1168,7 @@ function createPrioritizedFileDataCache(
       activeCount++;
       loadFileData(entry.manifest, resolveFileData, entry.controller.signal)
         .then((fileData) => {
+          entry.settled = true;
           touch(entry);
           if (cacheFileData && fileData.byteLength <= maxCachedFileBytes) {
             entry.fileData = fileData;
@@ -1204,7 +1206,9 @@ function createPrioritizedFileDataCache(
       }
       existing.priority = Math.min(existing.priority, priority);
       existing.token = token;
-      if (!existing.active) {
+      // A completed prefetch still owns its resolved promise until commit releases
+      // it, even when persistent byte caching is disabled. Never fetch it twice.
+      if (!existing.active && !existing.settled) {
         repositionQueueEntry(queue, existing);
       }
       pump();
@@ -1224,6 +1228,7 @@ function createPrioritizedFileDataCache(
       token,
       controller,
       active: false,
+      settled: false,
       aborted: false,
       releaseAfterActive: false,
       resolve: resolveEntry,
@@ -1251,7 +1256,7 @@ function createPrioritizedFileDataCache(
     },
     abortQueued: (predicate: (manifest: XGFChunkManifest, token: number | undefined) => boolean): void => {
       for (const entry of cache.values()) {
-        if (entry.active || entry.aborted || entry.fileData || !predicate(entry.manifest, entry.token)) {
+        if (entry.active || entry.settled || entry.aborted || !predicate(entry.manifest, entry.token)) {
           continue;
         }
         entry.aborted = true;

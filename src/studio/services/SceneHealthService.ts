@@ -171,7 +171,6 @@ export class SceneHealthService {
     this._inspectParams = {...DEFAULT_INSPECT_PARAMS, ...params.inspectParams};
     this._subscribe();
     this.refreshModels();
-    void this.inspectSelected();
   }
 
   queryFindings(query: HealthFindingsQuery) {
@@ -204,6 +203,8 @@ export class SceneHealthService {
       return;
     }
     if (this._state.selectedModelId !== modelId) {
+      this._abortController?.abort();
+      this._runId++;
       this._state.cleanupHistory.splice(0);
       this._state.lastCleanupSummary = "";
       this._lastFixResultByCode.clear();
@@ -211,24 +212,28 @@ export class SceneHealthService {
     }
     this._state.selectedModelId = modelId;
     this.refreshModels();
-    void this.inspectSelected();
   }
 
-  scheduleInspect(): void {
-    if (this._destroyed || this._refreshScheduled) {
-      return;
-    }
+  /** Invalidate a report on edits; expensive geometry checks run only on Inspect. */
+  private scheduleRefresh(): void {
+    if (this._destroyed) return;
     this._state.stale = true;
-    // Cleanup emits the same mutations as editing. Its own final inspection
-    // must run before automatic observers are allowed to start another run.
+    // Cleanup owns its mutations and the final verification report.
     if (this._state.applying) return;
+    if (this._state.inspecting) {
+      this._abortController?.abort();
+      this._runId++;
+      this._state.inspecting = false;
+      this._state.progressLabel = "";
+      this._state.status = "unknown";
+      this._state.statusText = "Model changed";
+      this._state.recommendation = "Select Inspect to check the updated model.";
+    }
+    if (this._refreshScheduled) return;
     this._refreshScheduled = true;
     requestAnimationFrame(() => {
       this._refreshScheduled = false;
-      if (!this._destroyed && !this._state.applying) {
-        this.refreshModels();
-        void this.inspectSelected();
-      }
+      if (!this._destroyed && !this._state.applying) this.refreshModels();
     });
   }
 
@@ -362,7 +367,7 @@ export class SceneHealthService {
         this._state.progressCurrent = 0;
         this._state.progressTotal = 0;
         this.refreshModels();
-        if (this._state.stale) this.scheduleInspect();
+        if (this._state.stale) this.scheduleRefresh();
       }
     }
   }
@@ -459,12 +464,12 @@ export class SceneHealthService {
       errors: selected ? this._state.errors : 0,
       warnings: selected ? this._state.warnings : 0,
       issueCount: selected ? this._state.issueCount : 0,
-      objectCount: Object.keys(model.objects).length,
-      meshCount: Object.keys(model.meshes).length,
-      geometryCount: Object.keys(model.geometries).length,
-      materialCount: Object.keys(model.materials).length,
-      textureCount: Object.keys(model.textures).length,
-      transformCount: Object.keys(model.transforms).length
+      objectCount: model.stats.numObjects,
+      meshCount: model.stats.numMeshes,
+      geometryCount: model.stats.numGeometries,
+      materialCount: model.stats.numMaterials,
+      textureCount: model.stats.numTextures,
+      transformCount: model.stats.numTransforms
     };
   }
 
@@ -473,12 +478,12 @@ export class SceneHealthService {
       return [];
     }
     return [
-      {label: "Objects", value: String(Object.keys(model.objects).length)},
-      {label: "Meshes", value: String(Object.keys(model.meshes).length)},
-      {label: "Geometries", value: String(Object.keys(model.geometries).length)},
-      {label: "Materials", value: String(Object.keys(model.materials).length)},
-      {label: "Textures", value: String(Object.keys(model.textures).length)},
-      {label: "Transforms", value: String(Object.keys(model.transforms).length)}
+      {label: "Objects", value: String(model.stats.numObjects)},
+      {label: "Meshes", value: String(model.stats.numMeshes)},
+      {label: "Geometries", value: String(model.stats.numGeometries)},
+      {label: "Materials", value: String(model.stats.numMaterials)},
+      {label: "Textures", value: String(model.stats.numTextures)},
+      {label: "Transforms", value: String(model.stats.numTransforms)}
     ];
   }
 
@@ -614,10 +619,10 @@ export class SceneHealthService {
 
   private _subscribe(): void {
     const events = this._scene.events;
-    const topologyChanged = () => this.scheduleInspect();
+    const topologyChanged = () => this.scheduleRefresh();
     const modelsChanged = () => {
       this.refreshModels();
-      this.scheduleInspect();
+      this.scheduleRefresh();
     };
     this._unsubscribers.push(
       events.onSceneModelCreated.subscribe(modelsChanged),
