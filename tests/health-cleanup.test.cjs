@@ -196,3 +196,51 @@ test("cleanup task success uses the outcome, not the words '0 errors'", async ()
   await actions.dataHealthActions.cleanupCodes(["OBJECT_DUPLICATE_PROPERTY_SET_REF"]);
   assert.deepEqual(outcomes, ["success"]);
 });
+
+
+test("Scene health stays on demand while streaming and invalidates inspected reports on mutations", async () => {
+  const scene = new Scene();
+  const model = ok(scene.createModel({id: "stream", loadingMode: "streaming", updateMode: "static"}));
+  const state = createSceneHealthPanelState();
+  const service = new SceneHealthService({scene, state});
+  try {
+    assert.equal(state.inspecting, false);
+    assert.equal(state.checkedAt, null);
+    for (let i = 0; i < 3; i++) {
+      ok(model.createGeometry({id: `g${i}`, primitive: TrianglesPrimitive,
+        positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2]}));
+      ok(model.createMesh({id: `m${i}`, geometryId: `g${i}`}));
+      ok(model.createObject({id: `o${i}`, meshIds: [`m${i}`]}));
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(state.inspecting, false);
+      assert.equal(state.checkedAt, null, "streaming must not launch geometry audits");
+      assert.equal(state.models[0].objectCount, i + 1);
+    }
+    await service.inspectSelected();
+    assert.ok(state.checkedAt, "the explicit Inspect action still runs all checks");
+    assert.equal(state.stale, false);
+    ok(model.createObject({id: "new", meshIds: []}));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(state.stale, true);
+    assert.equal(state.inspecting, false);
+    assert.equal(state.models[0].objectCount, 4);
+  } finally {service.destroy(); scene.destroy();}
+});
+
+test("a scene mutation cancels an in-flight inspection without publishing a current report", async () => {
+  const scene = new Scene();
+  const model = ok(scene.createModel({id: "changing"}));
+  const state = createSceneHealthPanelState();
+  const service = new SceneHealthService({scene, state});
+  try {
+    const pending = service.inspectSelected();
+    assert.equal(state.inspecting, true);
+    ok(model.createObject({id: "new", meshIds: []}));
+    await pending;
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(state.inspecting, false);
+    assert.equal(state.stale, true);
+    assert.equal(state.checkedAt, null);
+    assert.equal(state.statusText, "Model changed");
+  } finally {service.destroy(); scene.destroy();}
+});

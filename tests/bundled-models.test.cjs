@@ -162,6 +162,7 @@ test("real Baku chunks load shared assets, seal on completion and leave no camer
   const session=[...f.service.streams.values()][0];
   await until(()=>session.lifecycle.complete);
   assert.ok(session.model.stats.numObjects>0);
+  assert.equal(new Set(f.requests).size, f.requests.length, "completed prefetches must not be fetched again");
   assert.equal(session.model.sealed,true);
   assert.equal(f.workspace.bundledStreams[0].phase,"complete");
   const generation=session.controller.generation, requests=f.requests.length;
