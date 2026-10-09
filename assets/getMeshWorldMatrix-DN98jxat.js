@@ -1,0 +1,1 @@
+import{m,c as e,a as f}from"./index-DwCkmBZs.js";function c(a,l){const r=[];r.push(a.matrix);let o=a.parentTransform||null;for(;o;)r.push(o.matrix),o=o.parentTransform||null;let t;if(r.length===1)t=a.matrix;else{t=e(r[r.length-1]);for(let n=r.length-2;n>=0;n--)t=m(t,r[n],e())}if(!l)return t;const s=a.model.coordinateSystem,i=f(s,l,e());return m(i,t,e())}export{c as g};
