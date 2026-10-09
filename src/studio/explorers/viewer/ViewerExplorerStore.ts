@@ -1,3 +1,5 @@
+import {objectEffects, objectHasEffect, setObjectEffect, type ObjectEffectId, type ObjectEffects} from "../tree/objectEffects";
+import {viewIsolation} from "../../services/ViewIsolation";
 import {collapseAABB3, createAABB3Float64, expandAABB3Point3, type AABB3} from "@xeokit/sdk/base/math/boundaries";
 import {transformPoint3} from "@xeokit/sdk/base/math/matrix";
 import {
@@ -70,6 +72,7 @@ export interface ViewerExplorerNodeState {
   hasViewObject: boolean;
   canFit: boolean;
   controlsRevision: number;
+  effects: ObjectEffects;
 }
 
 export type ViewerExplorerControlKind = "boolean" | "number" | "select" | "color" | "vec3" | "mat4";
@@ -94,6 +97,7 @@ export interface ViewerExplorerState {
   roots: ViewerExplorerNodeState[];
   busy: boolean;
   revision: number;
+  activeNodeId: string;
 }
 
 export interface ViewerExplorerStoreParams {
@@ -115,6 +119,7 @@ interface ViewerExplorerNodeSpec {
   visible?: boolean;
   hasViewObject?: boolean;
   canFit?: boolean;
+  effects?: ObjectEffects;
 }
 
 interface EffectControlDescriptor {
@@ -365,7 +370,8 @@ export class ViewerExplorerStore {
   state: ViewerExplorerState = {
     roots: [],
     busy: false,
-    revision: 0
+    revision: 0,
+    activeNodeId: ""
   };
 
   private readonly _nodes = new Map<string, ViewerExplorerNodeState>();
@@ -474,11 +480,22 @@ export class ViewerExplorerStore {
   }
 
   toggleObjectVisibility(node: ViewerExplorerNodeState): void {
-    const viewObject = this._getViewObject(node);
-    if (!viewObject) {
-      return;
-    }
-    viewObject.visible = !viewObject.visible;
+    this.toggleObjectEffect(node, "visible");
+  }
+
+  toggleObjectEffect(node: ViewerExplorerNodeState, effect: ObjectEffectId): void {
+    const object = this._getViewObject(node);
+    const view = node.viewId ? this.viewer.views[node.viewId] : null;
+    if (!view || !object) return;
+    setObjectEffect(view, [object.id], effect, !objectHasEffect(object, effect));
+    this._syncDisplayedObjectNodes();
+  }
+
+  isolateObject(node: ViewerExplorerNodeState): void {
+    const object = this._getViewObject(node);
+    const view = node.viewId ? this.viewer.views[node.viewId] : null;
+    if (!view || !object) return;
+    viewIsolation(view).isolate([object.id], object.id);
     this._syncDisplayedObjectNodes();
   }
 
@@ -727,7 +744,8 @@ export class ViewerExplorerStore {
       visible: spec.visible !== false,
       hasViewObject: !!spec.hasViewObject,
       canFit: !!spec.canFit,
-      controlsRevision: 0
+      controlsRevision: 0,
+      effects: spec.effects || objectEffects()
     };
     if (this._makeReactive) {
       node = this._makeReactive(node);
@@ -823,6 +841,7 @@ export class ViewerExplorerStore {
       if (node.kind !== "object") continue;
       const object = this._getViewObject(node);
       node.visible = object?.visible !== false;
+      node.effects = objectEffects(object || undefined);
       node.hasViewObject = !!object;
       if (!object) continue;
       node.detail = objectSpec(object, "").detail || "";
@@ -912,6 +931,7 @@ function updateNode(node: ViewerExplorerNodeState, spec: ViewerExplorerNodeSpec,
   node.visible = spec.visible !== false;
   node.hasViewObject = !!spec.hasViewObject;
   node.canFit = !!spec.canFit;
+  node.effects = spec.effects || objectEffects();
 }
 
 function viewSpec(view: View): ViewerExplorerNodeSpec {
@@ -1080,6 +1100,7 @@ function objectSpec(viewObject: ViewObject, parentId: string): ViewerExplorerNod
     viewId: viewObject.view.id,
     componentId: viewObject.id,
     visible: viewObject.visible,
+    effects: objectEffects(viewObject),
     hasViewObject: true,
     canFit: true,
     hasChildren: true

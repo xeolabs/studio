@@ -40,6 +40,8 @@ the model is sealed and streaming stops. Unloading cancels the stream.
 Baku contains 3,776 geometry chunks and 244 shared asset chunks (about 226 MB
 including indexes). The initial view downloads only the chunks it needs. This
 stream includes geometry, without IFC property sets or a building hierarchy.
+Scene Health checks run when you select **Inspect**, so geometry analysis does
+not compete with streaming. Model changes mark an existing report as stale.
 
 ### Open bundled models by URL
 

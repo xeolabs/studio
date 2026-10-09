@@ -1256,7 +1256,13 @@ function createPrioritizedFileDataCache(
     },
     abortQueued: (predicate: (manifest: XGFChunkManifest, token: number | undefined) => boolean): void => {
       for (const entry of cache.values()) {
-        if (entry.active || entry.settled || entry.aborted || !predicate(entry.manifest, entry.token)) {
+        if (entry.active || entry.aborted || entry.fileData || !predicate(entry.manifest, entry.token)) {
+          continue;
+        }
+        // Drop unused completed prefetches as well, without retaining their
+        // resolved buffers or trying to abort an already completed request.
+        if (entry.settled) {
+          deleteEntry(entry);
           continue;
         }
         entry.aborted = true;

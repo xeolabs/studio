@@ -10,6 +10,7 @@ const code = require("esbuild").buildSync({
   stdin: {resolveDir: path.resolve(__dirname, "../src"), contents: [
     'export {View} from "@xeokit/sdk/viewing/viewer";',
     'export {Scene} from "@xeokit/sdk/model/scene";',
+    'export {viewIsolation} from "./studio/services/ViewIsolation";',
     'export {revealTreePath} from "./studio/explorers/tree/revealTreePath";',
     ...stores.map(([folder, name]) => `export {${name}} from "./studio/explorers/${folder}/${name}";`)
   ].join("\n")},
@@ -45,6 +46,22 @@ function fixture(t, name, count = 100001) {
     colorizedObjects: {}, opacityObjects: {}, layers: {default: layer}, sectionPlanes: {}, transforms: {},
     lightsList: [], lights: disabled, effects: disabled, texturing: {enabled: false}, resolutionScale: {enabled: false},
     styleBins: {get: () => ({}), create() {}},
+    setObjectsInStyleBin(style, ids, active) {for (const id of ids) {
+      const object = viewObjects[id];
+      if (active) object.bins.add(style); else object.bins.delete(style);
+      viewer.events.onViewObjectStyleBinChanged.fire(view, {viewObject: object, styleBinId: style});
+    }},
+    setObjectsColorized(ids, color) {for (const id of ids) {
+      viewObjects[id].colorize = color;
+      if (color) view.colorizedObjects[id] = viewObjects[id]; else delete view.colorizedObjects[id];
+      viewer.events.onViewObjectColorizeChanged.fire(view, viewObjects[id]);
+    }},
+    setObjectsOpacity(ids, opacity) {for (const id of ids) {
+      viewObjects[id].opacity = opacity;
+      viewObjects[id].opacityUpdated = opacity !== null;
+      if (opacity !== null) view.opacityObjects[id] = viewObjects[id]; else delete view.opacityObjects[id];
+      viewer.events.onViewObjectOpacityChanged.fire(view, viewObjects[id]);
+    }},
     setObjectsVisible(ids, active) {for (const id of ids) {
       viewObjects[id].visible = active;
       if (active) visible[id] = viewObjects[id]; else delete visible[id];
@@ -60,7 +77,7 @@ function fixture(t, name, count = 100001) {
     const object = {id, name: `Wall ${i}`, type: "IfcWall", related: {}, relating: {}, propertySets: []};
     walls[id] = objects[id] = object;
     relationships.push({type: "IfcRelContainedInSpatialStructure", relatingObject: storey, relatedObject: object});
-    viewObjects[id] = visible[id] = {id, view, layer, visible: true, hasStyleBin: () => false};
+    viewObjects[id] = visible[id] = {id, view, layer, visible: true, bins: new Set(), hasStyleBin(style) {return this.bins.has(style);}};
   }
   storey.related.IfcRelContainedInSpatialStructure = relationships;
   const create = () => new output.exports[name]({data, scene, view, viewer});
@@ -147,4 +164,41 @@ test("IFC hierarchy refresh guards cyclic relationships and retains one-level de
   f.data.events.onRelationshipCreated.fire();
   await tick();
   assert.ok(f.store._nodes.size < 210);
+});
+
+
+test("Viewer element actions target the row, synchronize external effects, and share reversible isolation", async t => {
+  const f = fixture(t, "ViewerExplorerStore", 3);
+  const node = await revealTreePath(f.store, f.store.getObjectPath("wall:1"));
+  const target = f.view.objects["wall:1"];
+  for (const effect of ["visible", "highlighted", "xrayed", "selected"]) {
+    const before = node.effects[effect];
+    f.store.toggleObjectEffect(node, effect);
+    await tick();
+    assert.equal(node.effects[effect], !before);
+    f.store.toggleObjectEffect(node, effect);
+    await tick();
+    assert.equal(node.effects[effect], before);
+  }
+  assert.equal(f.view.objects["wall:0"].visible, true);
+  assert.equal(f.view.objects["wall:0"].bins.size, 0);
+  assert.equal(target.colorize, null);
+  assert.equal(target.opacityUpdated, false);
+  f.view.setObjectsInStyleBin("xrayed", ["wall:1"], true);
+  await tick();
+  assert.equal(node.effects.xrayed, true, "menu follows effects changed outside the explorer");
+  f.store.toggleObjectEffect(node, "xrayed");
+  await tick();
+  assert.equal(target.hasStyleBin("xrayed"), false);
+  f.view.setObjectsVisible(["wall:2"], false);
+  f.store.isolateObject(node);
+  await tick();
+  assert.deepEqual(Object.values(f.view.objects).map(o => o.visible), [false, true, false]);
+  output.exports.viewIsolation(f.view).restore();
+  await tick();
+  assert.deepEqual(Object.values(f.view.objects).map(o => o.visible), [true, true, false]);
+  delete f.view.objects["wall:1"];
+  f.store.toggleObjectEffect(node, "visible");
+  f.store.isolateObject(node);
+  assert.equal(f.view.objects["wall:0"].visible, true, "stale rows cannot mutate another object");
 });

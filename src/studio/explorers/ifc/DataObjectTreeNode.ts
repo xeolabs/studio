@@ -1,3 +1,4 @@
+import {ExplorerObjectEffects} from "../tree/ExplorerObjectEffects";
 import type {DataObjectTreeNodeState, DataObjectTreeStore} from "./DataObjectTreeStore";
 import {isolateSubtree} from "./isolateSubtree";
 import {scrollExplorerRowIntoView} from "../scrollExplorerRowIntoView";
@@ -106,19 +107,12 @@ export function createDataObjectTreeNodeComponent(effectsIcon?: unknown) {
             </button>
           </span>
         </div>
-        <fieldset v-if="showEffects || store.state.activeNodeId === node.id" class="explorer-subtree-effects" :style="{ marginLeft: (node.depth * 14 + 34) + 'px' }">
-          <legend>Subtree effects</legend>
-          <button v-if="node.type === 'IfcBuildingStorey' && commands" type="button" class="explorer-subtree-button"
-            :disabled="!node.hasSubtreeViewObjects" title="View this floor from above" @click.stop="viewPlan">Plan</button>
-          <button type="button" class="explorer-subtree-button" :disabled="!node.hasSubtreeViewObjects"
-            title="Show only this subtree" @click.stop="isolateObject">Isolate</button>
-          <button type="button" class="explorer-subtree-button" :aria-pressed="node.effects.highlighted"
-            :disabled="!node.hasSubtreeViewObjects" @click.stop="toggleEffect('highlighted')">Highlight</button>
-          <button type="button" class="explorer-subtree-button" :aria-pressed="node.effects.xrayed"
-            :disabled="!node.hasSubtreeViewObjects" @click.stop="toggleEffect('xrayed')">X-ray</button>
-          <button type="button" class="explorer-subtree-button" :aria-pressed="node.effects.selected"
-            :disabled="!node.hasSubtreeViewObjects" title="Toggle selection styling" @click.stop="toggleEffect('selected')">Selection style</button>
-        </fieldset>
+        <ExplorerObjectEffects v-if="showEffects || store.state.activeNodeId === node.id"
+          :style="{ marginLeft: (node.depth * 14 + 34) + 'px' }" subtree
+          :effects="node.effects" :disabled="!node.hasSubtreeViewObjects"
+          :mixed-visibility="node.visibleCount > 0 && node.visibleCount < node.viewObjectCount"
+          :can-plan="node.type === 'IfcBuildingStorey' && !!commands"
+          @plan="viewPlan" @isolate="isolateObject" @toggle="toggleEffect"/>
         <ul v-if="node.expanded && !flat" class="xeokit-data-tree-children">
           <DataObjectTreeNode
             v-for="child in node.children"
@@ -129,6 +123,6 @@ export function createDataObjectTreeNodeComponent(effectsIcon?: unknown) {
       </component>
     `
   };
-  component.components = {DataObjectTreeNode: component, IfcTypeIcon: createIfcTypeIcon(), EffectsIcon: effectsIcon || {template: '<span>...</span>'}};
+  component.components = {ExplorerObjectEffects, DataObjectTreeNode: component, IfcTypeIcon: createIfcTypeIcon(), EffectsIcon: effectsIcon || {template: '<span>...</span>'}};
   return component;
 }

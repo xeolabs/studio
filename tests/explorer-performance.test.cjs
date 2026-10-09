@@ -106,10 +106,11 @@ test("Viewer state changes update object fields without rebuilding branches", ()
   const object = {id: "wall", kind: "object", viewId: "view", componentId: "wall", children: [], expanded: false};
   const store = Object.create(ViewerExplorerStore.prototype);
   Object.assign(store, {_filteredDirty: new Set(), state: {roots: [object], revision: 8}, viewer: {views: {view: {objects: {
-    wall: {id: "wall", visible: false, layer: {id: "default"}, view: {id: "view"}}
+    wall: {id: "wall", visible: false, hasStyleBin: style => style === "xrayed", layer: {id: "default"}, view: {id: "view"}}
   }}}}});
   store._syncDisplayedObjectNodes();
   assert.equal(object.visible, false); assert.equal(store.state.revision, 8);
+  assert.deepEqual(object.effects, {visible: false, selected: false, highlighted: false, xrayed: true});
   assert.deepEqual(object.children, []);
 });
 

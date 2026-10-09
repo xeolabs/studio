@@ -1,10 +1,13 @@
+import {ExplorerObjectEffects} from "../tree/ExplorerObjectEffects";
+import type {ObjectEffectId} from "../tree/objectEffects";
+import {scrollExplorerRowIntoView} from "../scrollExplorerRowIntoView";
 import type {ViewerExplorerControlState, ViewerExplorerNodeState, ViewerExplorerStore} from "./ViewerExplorerStore";
 import {createExplorerNumberInput} from "../tree/ExplorerNumberInput";
 import {createExplorerVectorInput} from "../tree/ExplorerVectorInput";
 import {createExplorerTextInput} from "../tree/ExplorerTextInput";
 import {parseMatrixValue} from "./matrixInput";
 
-export function createViewerExplorerNodeComponent(copyIcon?: unknown) {
+export function createViewerExplorerNodeComponent(copyIcon?: unknown, effectsIcon?: unknown) {
   const component: any = {
     name: "ViewerExplorerNode",
     props: {
@@ -12,7 +15,33 @@ export function createViewerExplorerNodeComponent(copyIcon?: unknown) {
       store: {type: Object, required: true},
       flat: {type: Boolean, default: false}
     },
+    data() { return {showEffects: false}; },
     methods: {
+      revealEffects(this: any) {
+        this.$nextTick(() => {
+          const effects = this.$el.querySelector(".explorer-subtree-effects");
+          const host = this.$el.closest(".explorer-panel-host, .xeokit-viewer-explorer");
+          if (effects && host) scrollExplorerRowIntoView(effects, host);
+        });
+      },
+      activateRow(this: any, event: Event) {
+        if (this.node.kind !== "object" || !this.node.hasViewObject ||
+          (event.target as HTMLElement).closest("button, input, select, textarea, a")) return;
+        this.store.state.activeNodeId = this.node.id;
+        this.revealEffects();
+      },
+      toggleEffects(this: any) {
+        const open = this.showEffects || this.store.state.activeNodeId === this.node.id;
+        this.showEffects = !open;
+        if (!open) this.revealEffects();
+        if (this.store.state.activeNodeId === this.node.id) this.store.state.activeNodeId = "";
+      },
+      toggleEffect(this: {node: ViewerExplorerNodeState; store: ViewerExplorerStore}, effect: ObjectEffectId) {
+        this.store.toggleObjectEffect(this.node, effect);
+      },
+      isolateObject(this: {node: ViewerExplorerNodeState; store: ViewerExplorerStore}) {
+        this.store.isolateObject(this.node);
+      },
       validMatrix(value: string) { return !!parseMatrixValue(value); },
       validColor(value: string) { return /^#[0-9a-f]{6}$/i.test(value); },
       toggleExpanded(this: {node: ViewerExplorerNodeState; store: ViewerExplorerStore}) {
@@ -57,6 +86,7 @@ export function createViewerExplorerNodeComponent(copyIcon?: unknown) {
       <component :is="flat ? 'div' : 'li'" class="xeokit-viewer-explorer-node">
         <div
           class="xeokit-viewer-explorer-row"
+          @click="activateRow" :class="{'is-active-node': store.state.activeNodeId === node.id}"
           :data-node-id="node.id"
           :data-tree-depth="node.depth" role="treeitem" tabindex="-1" :aria-level="node.depth + 1"
           :aria-expanded="node.hasChildren ? node.expanded : undefined"
@@ -100,8 +130,8 @@ export function createViewerExplorerNodeComponent(copyIcon?: unknown) {
               :aria-pressed="node.visible"
               :title="node.visible ? 'Hide in View' : 'Show in View'"
               :aria-label="node.visible ? 'Hide in View' : 'Show in View'"
-              @click.stop="toggleVisible">
-              <svg class="xeokit-viewer-explorer-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6-10-6-10-6z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              :disabled="!node.hasViewObject" @click.stop="toggleVisible">
+              <svg class="xeokit-viewer-explorer-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6-10-6-10-6z"></path><circle cx="12" cy="12" r="3"></circle><path v-if="!node.visible" d="M4 20 20 4"></path></svg>
             </button>
             <button
               v-if="node.canFit"
@@ -111,8 +141,17 @@ export function createViewerExplorerNodeComponent(copyIcon?: unknown) {
               @click.stop="fitObject">
               <svg class="xeokit-viewer-explorer-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg>
             </button>
+            <button v-if="node.kind === 'object'" class="xeokit-viewer-explorer-action"
+              title="Object effects" aria-label="Object effects" :disabled="!node.hasViewObject"
+              :aria-expanded="showEffects || store.state.activeNodeId === node.id"
+              :class="{ active: node.effects.highlighted || node.effects.xrayed }" @click.stop="toggleEffects">
+              <EffectsIcon :size="16" aria-hidden="true"/>
+            </button>
           </span>
         </div>
+        <ExplorerObjectEffects v-if="node.kind === 'object' && (showEffects || store.state.activeNodeId === node.id)"
+          :style="{ marginLeft: (node.depth * 14 + 34) + 'px' }"
+          :effects="node.effects" :disabled="!node.hasViewObject" @isolate="isolateObject" @toggle="toggleEffect"/>
         <div
           v-if="(node.kind === 'effect' || node.kind === 'cameraComponent' || node.kind === 'light') && node.expanded"
           class="xeokit-viewer-explorer-controls"
@@ -194,6 +233,6 @@ export function createViewerExplorerNodeComponent(copyIcon?: unknown) {
       </component>
     `
   };
-  component.components = {ViewerExplorerNode: component, ExplorerNumberInput: createExplorerNumberInput(), ExplorerVectorInput: createExplorerVectorInput(copyIcon), ExplorerTextInput: createExplorerTextInput()};
+  component.components = {ExplorerObjectEffects, EffectsIcon: effectsIcon || {template: '<span>...</span>'}, ViewerExplorerNode: component, ExplorerNumberInput: createExplorerNumberInput(), ExplorerVectorInput: createExplorerVectorInput(copyIcon), ExplorerTextInput: createExplorerTextInput()};
   return component;
 }

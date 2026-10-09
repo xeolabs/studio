@@ -219,7 +219,10 @@ test("Scene health stays on demand while streaming and invalidates inspected rep
     await service.inspectSelected();
     assert.ok(state.checkedAt, "the explicit Inspect action still runs all checks");
     assert.equal(state.stale, false);
-    ok(model.createObject({id: "new", meshIds: []}));
+    ok(model.createGeometry({id: "extra", primitive: TrianglesPrimitive,
+      positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2]}));
+    ok(model.createMesh({id: "extra", geometryId: "extra"}));
+    ok(model.createObject({id: "new", meshIds: ["extra"]}));
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(state.stale, true);
     assert.equal(state.inspecting, false);
@@ -235,7 +238,10 @@ test("a scene mutation cancels an in-flight inspection without publishing a curr
   try {
     const pending = service.inspectSelected();
     assert.equal(state.inspecting, true);
-    ok(model.createObject({id: "new", meshIds: []}));
+    ok(model.createGeometry({id: "extra", primitive: TrianglesPrimitive,
+      positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2]}));
+    ok(model.createMesh({id: "extra", geometryId: "extra"}));
+    ok(model.createObject({id: "new", meshIds: ["extra"]}));
     await pending;
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(state.inspecting, false);

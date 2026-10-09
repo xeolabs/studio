@@ -1,3 +1,4 @@
+import {objectHasEffect, setObjectEffect} from "../tree/objectEffects";
 import type {Data, DataObject, Relationship} from "@xeokit/sdk/model/data";
 import type {TreeSearchEntry} from "../tree/treeSearchEntries";
 import {naturalCompare} from "../tree/naturalCompare";
@@ -426,24 +427,7 @@ export class DataObjectStoreysStore {
   }
 
   private _setEffect(objectIds: string[], effectId: DataObjectTreeEffectId, active: boolean): void {
-    if (effectId === "visible") {
-      this.view.setObjectsVisible(objectIds, active);
-      return;
-    }
-    if (effectId === "highlighted") {
-      this.view.setObjectsColorized(objectIds, active ? [1, 0.86, 0.2] : null);
-      this.view.setObjectsInStyleBin(STYLE_BIN_BY_EFFECT.highlighted!, objectIds, active);
-      return;
-    }
-    if (effectId === "xrayed") {
-      this.view.setObjectsOpacity(objectIds, active ? 0.28 : null);
-      this.view.setObjectsInStyleBin(STYLE_BIN_BY_EFFECT.xrayed!, objectIds, active);
-      return;
-    }
-    const styleBinId = STYLE_BIN_BY_EFFECT[effectId];
-    if (styleBinId) {
-      this.view.setObjectsInStyleBin(styleBinId, objectIds, active);
-    }
+    setObjectEffect(this.view, objectIds, effectId, active);
   }
 
   private _nodeHasEffect(node: DataObjectTreeNodeState, effectId: DataObjectTreeEffectId): boolean {
@@ -456,21 +440,7 @@ export class DataObjectStoreysStore {
   }
 
   private _objectHasEffect(objectId: string, effectId: DataObjectTreeEffectId): boolean {
-    const viewObject = this.view.objects[objectId];
-    if (!viewObject) {
-      return false;
-    }
-    if (effectId === "visible") {
-      return viewObject.visible;
-    }
-    if (effectId === "highlighted") {
-      return !!viewObject.colorize || viewObject.hasStyleBin(STYLE_BIN_BY_EFFECT.highlighted!);
-    }
-    if (effectId === "xrayed") {
-      return viewObject.opacityUpdated || viewObject.hasStyleBin(STYLE_BIN_BY_EFFECT.xrayed!);
-    }
-    const styleBinId = STYLE_BIN_BY_EFFECT[effectId];
-    return !!styleBinId && viewObject.hasStyleBin(styleBinId);
+    return objectHasEffect(this.view.objects[objectId], effectId);
   }
 
   private _syncAllMaterializedEffectStates(): void {

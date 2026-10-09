@@ -50,7 +50,7 @@ export class ViewerExplorerView {
 
   private async _mount(container: HTMLElement, Vue: any): Promise<void> {
     const icons = await loadExplorerIcons();
-    const PagedTree = createPagedTree(Vue, createViewerExplorerNodeComponent(icons.Copy), icons);
+    const PagedTree = createPagedTree(Vue, createViewerExplorerNodeComponent(icons.Copy, icons.SlidersHorizontal), icons);
     const view = this;
     const store = this.store;
     this._app = Vue.createApp({
